@@ -262,8 +262,8 @@ class So100DataConfig(BaseDataConfig):
 ###########################################################################################
 
 class So100TrackDataConfig(BaseDataConfig):
-    video_keys = ["video.ego_view"]
-    state_keys = ["state.joint_positions", "state.gripper", "state.track_ee_pose", "state.track_ee_rot"]
+    video_keys = ["video.scene_camera", "video.wrist_camera"]
+    state_keys = ["state.right_arm_ee_pose", "state.right_arm_ee_rot", "state.gripper"]
     action_keys = ["action.right_arm_ee_pose", "action.right_arm_ee_rot", "action.gripper"]
     language_keys = ["annotation.human.action.task_description"]
     observation_indices = [0]
