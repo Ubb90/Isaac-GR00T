@@ -1,0 +1,62 @@
+# groot-finetune-job.yaml
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Give your experiment a unique name
+  name: groot-finetune-lora-1
+  # IMPORTANT: Replace this with your actual personal namespace on the cluster
+  namespace: pgr25fin
+spec:
+  template:
+    spec:
+      containers:
+      - name: finetune-container
+        # Use the custom Docker image you just built and pushed
+        image: fkgsoftware/groot-finetune:0.1
+
+        # This is your finetuning command, with paths adjusted for the /storage mount
+        command: [
+            "python", "scripts/gr00t_finetune.py",
+            "--dataset-path", "/storage/dataset/lerobot_pick_cube_v2_offset",
+            "--output-dir", "/storage/dataset/groot_track_cube_offset",
+            "--num-gpus", "2",
+            "--max-steps", "50000",
+            "--batch-size", "16",
+            "--learning_rate", "3e-5",
+            "--lora-rank", "2",
+            "--video-backend", "torchvision_av",
+            "--data-config", "so100_track",
+            "--no-tune-visual"
+        ]
+
+        # Define the compute resources your job needs
+        resources:
+          requests: # Resources the cluster MUST reserve for your job
+            cpu: "8"
+            memory: "64Gi"
+            nvidia.com/gpu: "2" # Request 2 GPUs, as specified in your command
+          limits: # Hard limits to prevent your job from using excessive resources
+            cpu: "12"
+            memory: "96Gi"
+            nvidia.com/gpu: "2"
+
+        # This section mounts your persistent storage into the container
+        volumeMounts:
+        - name: personal-storage
+          # The path inside the container where your storage will be accessible
+          mountPath: /storage
+
+      # This section defines the storage volume itself
+      volumes:
+      - name: personal-storage
+        persistentVolumeClaim:
+          # IMPORTANT: This must match the name of your personal storage volume.
+          # Find this name in the cluster's Launcher UI (e.g., richardmvol1claim).
+          claimName: richardmvol1claim
+
+      # If the job fails, do not restart the container. The backoffLimit controls retries.
+      restartPolicy: OnFailure
+
+  # How many times to retry the entire job if it exits with an error
+  backoffLimit: 2
