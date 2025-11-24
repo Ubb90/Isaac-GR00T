@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 
 import torch
-from transformers import TrainingArguments, set_seed
+from transformers import EarlyStoppingCallback, TrainingArguments, set_seed
 
 from gr00t.data.dataset import LeRobotMixtureDataset, LeRobotSingleDataset
 from gr00t.experiment.trainer import DualBrainTrainer
@@ -37,6 +37,9 @@ class TrainRunner:
         training_args: TrainingArguments,
         train_dataset: LeRobotSingleDataset | LeRobotMixtureDataset,
         resume_from_checkpoint: bool = False,
+        enable_early_stopping: bool = False,
+        early_stopping_patience: int = 3,
+        early_stopping_threshold: float = 0.0,
     ):
         self.training_args = training_args
         self.output_dir = Path(training_args.output_dir)
@@ -44,6 +47,9 @@ class TrainRunner:
         self.exp_cfg_dir.mkdir(parents=True, exist_ok=True)
         self.resume_from_checkpoint = resume_from_checkpoint
         self.train_dataset = train_dataset
+        self.enable_early_stopping = enable_early_stopping
+        self.early_stopping_patience = early_stopping_patience
+        self.early_stopping_threshold = early_stopping_threshold
         # Set up training arguments
         training_args.run_name = (
             training_args.output_dir.split("/")[-1]
@@ -140,10 +146,14 @@ class TrainRunner:
             )
 
         # Create the trainer
+        # Use the same dataset for evaluation when early stopping is enabled
+        eval_dataset = train_dataset if self.enable_early_stopping else None
+        
         trainer = DualBrainTrainer(
             model=model,
             args=training_args,
             train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             data_collator=data_collator,
             compute_dtype=compute_dtype,
         )
@@ -154,6 +164,18 @@ class TrainRunner:
             run_name=run_name, exp_cfg_dir=self.exp_cfg_dir
         )
         trainer.add_callback(ckpt_format_callback)
+
+        # Add early stopping callback if enabled
+        if self.enable_early_stopping:
+            early_stopping_callback = EarlyStoppingCallback(
+                early_stopping_patience=self.early_stopping_patience,
+                early_stopping_threshold=self.early_stopping_threshold,
+            )
+            trainer.add_callback(early_stopping_callback)
+            print(
+                f"Early stopping enabled with patience={self.early_stopping_patience} "
+                f"and threshold={self.early_stopping_threshold}"
+            )
 
         # Log dataloader information
         train_dl_len = len(trainer.get_train_dataloader())

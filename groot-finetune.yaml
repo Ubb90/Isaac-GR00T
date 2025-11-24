@@ -1,82 +1,107 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  # The cluster will generate a unique name like groot-cube-finetune-abcde
-  generateName: groot-cube-finetune-
-  namespace: pgr25fin
+  generateName: groot-finetune-
+  namespace: pgr25florent
 spec:
-  backoffLimit: 0 # Don't restart automatically if the python script crashes
+  backoffLimit: 0 # Don't retry automatically if code fails
   template:
     spec:
-      # Required to read/write to the PVC
       serviceAccountName: containerroot
-
-      # Request A6000 nodes (or change to RTX-4090 if preferred)
+ 
+      # Hardware Request
       nodeSelector:
         nvidia.com/gpu.product: "NVIDIA-RTX-A6000"
-
+ 
       volumes:
-      # Mount your personal storage claim
+      # 1. Output Storage (Personal)
       - name: personal-storage
         persistentVolumeClaim:
-          claimName: pgr25finvol1claim
-      # Shared memory is required for multi-GPU training
+          claimName: pgr25florentvol1claim
+ 
+      # 2. Input Data Storage (Shared)
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: pgr25florent-datasets-claim
+ 
       - name: dshm
         emptyDir:
           medium: Memory
-
+ 
       containers:
       - name: trainer
         image: docker.io/fkgsoftware/groot-finetune:v1
         imagePullPolicy: Always
-
-        # Run as root to avoid permission errors on the mounted storage
+ 
         securityContext:
           runAsUser: 0
-
+ 
         resources:
           requests:
             cpu: "16"
             memory: "64Gi"
-            nvidia.com/gpu: "1" # Requesting 2 GPUs
+            nvidia.com/gpu: "1"
           limits:
             cpu: "24"
             memory: "128Gi"
             nvidia.com/gpu: "1"
-
+ 
         volumeMounts:
         - name: personal-storage
           mountPath: /data
+        - name: shared-storage
+          mountPath: /mnt/datasets
+          readOnly: true
         - name: dshm
           mountPath: /dev/shm
-
+ 
         env:
         - name: WANDB_MODE
-          value: "offline" # Logs will be saved locally to /data/dataset/groot_track_cube_offset
+          value: "offline"
         - name: PYTHONUNBUFFERED
           value: "1"
-
+ 
         command: ["/bin/bash", "-c"]
         args:
           - |
             echo "--- STARTING GR00T FINETUNE ---"
             nvidia-smi
-
-            # Create output directory if it doesn't exist
-            mkdir -p /data/dataset/groot_track_cube_offset
-
-            # Run the training script
-            # Mapped '/media/baxter/OneDriveBackup' -> '/data'
+ 
+            # 1. Verify Dataset Path before starting
+            DATASET_PATH="/mnt/datasets/letrack/so101track_cube_swap_lerobot_random/"
+ 
+            if [ ! -d "$DATASET_PATH" ]; then
+              echo "ERROR: Dataset not found at $DATASET_PATH"
+              echo "Listing /mnt/datasets/letrack to help debug:"
+              ls -F /mnt/datasets/letrack/
+              exit 1
+            fi
+ 
+            echo "Dataset found at: $DATASET_PATH"
+ 
+            # 2. Create Output Directory on Personal Storage
+            OUTPUT_DIR="/data/groot_track_cube_offset_exp1"
+            mkdir -p "$OUTPUT_DIR"
+ 
+            # 3. Run Training
             python scripts/gr00t_finetune.py \
-              --dataset-path "/data/dataset/lerobot_pick_cube_v2_offset" \
-              --output-dir "/data/dataset/groot_track_cube_offset" \
+              --dataset-path "$DATASET_PATH" \
+              --output-dir "$OUTPUT_DIR" \
               --num-gpus 1 \
               --max-steps 50000 \
-              --batch-size 16 \
-              --learning_rate 3e-5 \
+              --batch-size 32 \
+              --learning_rate 1e-5 \
               --video-backend torchvision_av \
               --data-config so100_track \
               --no-tune-visual \
-              --lora-rank 2
-
+              --lora-rank 2 \
+              --lora-alpha 128 \
+              --lora-dropout 0.05 \
+              --enable_early_stopping \
+              --early_stopping_patience 100 \
+              --early_stopping_threshold 0.01 \
+              --eval_steps 50 \
+              --weight_decay 1e-6
+              2>&1 | tee "$OUTPUT_DIR/training_log.txt"
+ 
       restartPolicy: OnFailure

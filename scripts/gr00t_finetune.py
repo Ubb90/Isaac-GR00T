@@ -63,7 +63,7 @@ class ArgsConfig:
     num_gpus: int = 1
     """Number of GPUs to use for training."""
 
-    save_steps: int = 1000
+    save_steps: int = 5000
     """Number of steps between saving checkpoints."""
 
     # Model parameters
@@ -133,6 +133,19 @@ class ArgsConfig:
     # Mixture dataset parameters
     balance_trajectory_weights: bool = True
     """Used in LeRobotMixtureDataset. If True, sample trajectories within a dataset weighted by their length; otherwise, equal weighting."""
+
+    # Early stopping parameters
+    enable_early_stopping: bool = False
+    """Whether to enable early stopping based on evaluation loss."""
+
+    early_stopping_patience: int = 3
+    """Number of evaluations with no improvement after which training will be stopped."""
+
+    early_stopping_threshold: float = 0.0
+    """Minimum change in evaluation loss to qualify as an improvement."""
+
+    eval_steps: int = 500
+    """Number of training steps between evaluations (used when early stopping is enabled)."""
 
 
 #####################################################################################
@@ -278,11 +291,15 @@ def main(config: ArgsConfig):
         max_steps=config.max_steps,
         save_strategy="steps",
         save_steps=config.save_steps,
-        # evaluation_strategy="no",
-        save_total_limit=5,
+        evaluation_strategy="steps" if config.enable_early_stopping else "no",
+        eval_steps=config.eval_steps if config.enable_early_stopping else None,
+        save_total_limit=10,
         report_to=config.report_to,
         seed=42,
-        do_eval=False,
+        do_eval=config.enable_early_stopping,
+        load_best_model_at_end=config.enable_early_stopping,
+        metric_for_best_model="loss",
+        greater_is_better=False,
         ddp_find_unused_parameters=False,
         ddp_bucket_cap_mb=100,
         torch_compile_mode=None,
@@ -294,6 +311,9 @@ def main(config: ArgsConfig):
         model=model,
         training_args=training_args,
         resume_from_checkpoint=config.resume,
+        enable_early_stopping=config.enable_early_stopping,
+        early_stopping_patience=config.early_stopping_patience,
+        early_stopping_threshold=config.early_stopping_threshold,
     )
 
     # 2.3 run experiment
