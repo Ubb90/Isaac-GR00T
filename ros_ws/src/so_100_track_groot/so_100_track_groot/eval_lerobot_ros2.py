@@ -54,7 +54,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image, JointState
-from geometry_msgs.msg import Pose, Point, Quaternion
+from geometry_msgs.msg import Pose, Point, Quaternion, PoseStamped
 from std_msgs.msg import Header, Bool
 import cv2
 
@@ -92,8 +92,9 @@ class Gr00tROS2InferenceClient:
         assert (
             len(self.robot_state_keys) == 6
         ), f"robot_state_keys should be size 6, but got {len(self.robot_state_keys)}"
-        # Update modality keys to match what the policy expects based on the error message
-        self.modality_keys = ["joint_positions", "gripper", "track_ee_pose", "track_ee_rot"]
+        # Update modality keys to match what the policy expects
+        # Server expects: state.right_arm_ee_pose, state.right_arm_ee_rot, state.gripper
+        self.modality_keys = ["right_arm_ee_pose", "right_arm_ee_rot", "gripper"]
 
     def get_action(self, camera_images: Dict[str, np.ndarray], 
                    joint_states: np.ndarray, robot_pose: np.ndarray, lang: str) -> List[np.ndarray]:
@@ -126,15 +127,11 @@ class Gr00tROS2InferenceClient:
         if self.show_images:
             self._view_images(camera_images)
 
-        # Add robot state - use the keys expected by the policy
-        # Use actual joint positions from the joint_states topic
-        if len(joint_states) >= 5:
-            obs_dict["state.joint_positions"] = joint_states[:5].astype(np.float64)  # First 5 joints (arm)
-            print(f"DEBUG: Joint positions: {joint_states[:5]}")
-        else:
-            print(f"Error: Expected at least 5 arm joints, got {len(joint_states)}")
-            raise ValueError(f"Insufficient arm joint data: expected 5 joints, got {len(joint_states)}")
-            
+        # Add robot state - use the keys expected by the policy server
+        # The server expects: state.right_arm_ee_pose, state.right_arm_ee_rot, state.gripper
+        # NOT joint_positions or track_ee_pose/track_ee_rot
+        
+        # Gripper state
         if len(joint_states) >= 6:
             obs_dict["state.gripper"] = joint_states[5:6].astype(np.float64)  # Gripper state
             print(f"DEBUG: Gripper state: {joint_states[5:6]}")
@@ -142,11 +139,10 @@ class Gr00tROS2InferenceClient:
             # No gripper data available - raise error
             raise ValueError("Gripper joint data is required but not available")
             
-            
         # Use real robot pose data from the topic if available
         if robot_pose is not None and len(robot_pose) >= 7:
-            obs_dict["state.track_ee_pose"] = robot_pose[:3].astype(np.float64)  # [x, y, z]
-            obs_dict["state.track_ee_rot"] = robot_pose[3:7].astype(np.float64)  # [qx, qy, qz, qw]
+            obs_dict["state.right_arm_ee_pose"] = robot_pose[:3].astype(np.float64)  # [x, y, z]
+            obs_dict["state.right_arm_ee_rot"] = robot_pose[3:7].astype(np.float64)  # [qx, qy, qz, qw]
             print(f"DEBUG: Current EE pose: {robot_pose[:3]}")
             print(f"DEBUG: Current EE rotation: {robot_pose[3:7]}")
         else:
@@ -345,7 +341,7 @@ class Gr00tROS2Node(Node):
         
         # Robot pose subscriber
         self.create_subscription(
-            Pose,
+            PoseStamped,
             self.config.robot_pose_topic,
             self.robot_pose_callback,
             qos_profile
@@ -391,13 +387,13 @@ class Gr00tROS2Node(Node):
         except Exception as e:
             self.get_logger().error(f"Error converting camera image: {e}")
 
-    def robot_pose_callback(self, msg: Pose):
+    def robot_pose_callback(self, msg: PoseStamped):
         """Callback for robot pose messages."""
         try:
             # Extract position and orientation from Pose message
-            pos = msg.position
-            orient = msg.orientation
-            
+            pos = msg.pose.position
+            orient = msg.pose.orientation
+
             new_pose = np.array([
                 pos.x, pos.y, pos.z,
                 orient.x, orient.y, orient.z, orient.w
@@ -539,10 +535,9 @@ class Gr00tROS2Node(Node):
             
             # Log current state before requesting action
             self.get_logger().info(f"Current state before policy query:")
-            self.get_logger().info(f"  - Joint positions: {self.latest_joint_states[:5]}")
             self.get_logger().info(f"  - Gripper: {self.latest_joint_states[5] if len(self.latest_joint_states) > 5 else 'N/A'}")
-            self.get_logger().info(f"  - EE pose: {self.latest_robot_pose[:3]}")
-            self.get_logger().info(f"  - EE rot: {self.latest_robot_pose[3:]}")
+            self.get_logger().info(f"  - Right arm EE pose: {self.latest_robot_pose[:3]}")
+            self.get_logger().info(f"  - Right arm EE rot: {self.latest_robot_pose[3:]}")
             self.get_logger().info(f"  - Available cameras: {list(self.camera_images.keys())}")
             
             action_data = self.policy.get_action(
@@ -606,19 +601,19 @@ class Gr00tROS2Node(Node):
                 y=float(action_dict['pose'][1]), 
                 z=float(action_dict['pose'][2])
             )
-            # pose_msg.orientation = Quaternion(
-            #     x=float(action_dict['rotation'][0]), 
-            #     y=float(action_dict['rotation'][1]), 
-            #     z=float(action_dict['rotation'][2]), 
-            #     w=float(action_dict['rotation'][3])
-            # )
-
             pose_msg.orientation = Quaternion(
-                x=0.0, 
-                y=0.0, 
-                z=0.0, 
-                w=1.0
+                x=float(action_dict['rotation'][0]), 
+                y=float(action_dict['rotation'][1]), 
+                z=float(action_dict['rotation'][2]), 
+                w=float(action_dict['rotation'][3])
             )
+
+            # pose_msg.orientation = Quaternion(
+            #     x=0.0, 
+            #     y=0.0, 
+            #     z=0.0, 
+            #     w=1.0
+            # )
 
             self.ee_pose_pub.publish(pose_msg)
             
@@ -654,15 +649,15 @@ class ROS2EvalConfig:
     # ROS2 topic configuration
     camera_topics: List[str] = None
     camera_keys: List[str] = None
-    robot_state_topic: str = "/so101track_cube/joint_states"
-    robot_pose_topic: str = "/so101track_cube/right_arm/end_effector/pose"
+    robot_state_topic: str = "/dataset/joint_states"
+    robot_pose_topic: str = "/dataset/right_arm_ee_pose"
     ee_pose_topic: str = "/right_hand/pose"
     gripper_topic: str = "/right_hand/trigger"
     
     # Control configuration
     control_frequency: float = 0.1  # Hz - reduced from 2.0 to give robot time to reach targets
     wait_for_convergence: bool = True  # If True, wait until robot reaches target before next action
-    convergence_threshold: float = 0.01  # meters - how close to target before considering "reached"
+    convergence_threshold: float = 0.05  # meters - how close to target before considering "reached"
     
     # Debug options
     show_images: bool = True
@@ -672,8 +667,8 @@ class ROS2EvalConfig:
         # Based on So100TrackDataConfig: ["video.scene_camera", "video.wrist_camera"]
         if self.camera_topics is None:
             self.camera_topics = [
-                "/so101track_cube/camera/rgb/image_raw",
-                "/so101track_cube/wrist_camera/rgb/image_raw"
+                "/dataset/scene_camera/rgb",
+                "/dataset/wrist_camera/rgb"
             ]
         
         # Set default camera keys if not provided

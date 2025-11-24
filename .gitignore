@@ -124,3 +124,7 @@ tmp/
 output/
 CLAUDE.md
 create_source_snapshot.sh
+
+**/build/** 
+**/log/**
+**/install/**
