@@ -115,10 +115,12 @@ wandb
 # Playground
 playground/
 
-# Hydra 
+# Hydra
 .hydra/
 
 # Data
 demo_data/gr00t-gr1-apple-to-shelf/
 tmp/
 output/
+CLAUDE.md
+create_source_snapshot.sh
