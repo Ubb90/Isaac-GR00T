@@ -81,6 +81,25 @@ class DualBrainTrainer(transformers.Trainer):
         loss = outputs["loss"]
         return (loss, outputs) if return_outputs else loss
 
+    def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
+        """
+        Override prediction_step to handle evaluation properly.
+        The model expects the inputs dict directly, so we pass it as-is.
+        """
+        has_labels = False  # We don't use separate labels
+        inputs = self._prepare_inputs(inputs)
+        
+        with torch.no_grad():
+            with self.compute_loss_context_manager():
+                loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
+            loss = loss.mean().detach()
+
+        if prediction_loss_only:
+            return (loss, None, None)
+        
+        # Return loss with None for logits and labels since we don't need them
+        return (loss, None, None)
+
     def create_optimizer(self):
         """
         Setup the optimizer.
