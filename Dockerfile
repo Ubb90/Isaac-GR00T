@@ -1,47 +1,55 @@
-# Dockerfile - A robust and efficient blueprint for the GR00T environment.
-
-# 1. Start from an official NVIDIA CUDA **devel** image.
 FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
 
-# 2. Set environment variables.
+# 1. Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 WORKDIR /workspace
 
-# 3. Install necessary system-level packages.
+# 2. Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3.10 \
     python3-pip \
+    python3-dev \
     ffmpeg \
     git \
     libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
-    libxrender-dev && \
-    rm -rf /var/lib/apt/lists/*
+    libxrender-dev \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# 4. Copy ONLY the requirements file.
+# 3. Alias python3 to python
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# 4. Install core python build tools AND flash-attn build dependencies
+# Added: packaging, psutil, ninja (Required for building flash-attn without isolation)
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel packaging psutil ninja
+
+# 5. Copy requirements first to cache pip installs
 COPY requirements.txt .
 
-# 5. Install the most critical, heavy, and build-time-dependent libraries first.
+# 6. Install PyTorch stack FIRST
 RUN pip3 install --no-cache-dir \
-    packaging \
-    wheel \
-    setuptools \
     numpy==1.26.4 \
     torch==2.5.1 \
     torchvision==0.20.1 \
     torchaudio==2.5.1
 
-# 6. Now, install the rest of the packages from the requirements file.
+# 7. Install flash-attn with --no-build-isolation
+# Now that psutil/ninja/torch are present, this should succeed
+RUN pip3 install --no-cache-dir --no-build-isolation flash-attn==2.7.1.post4
+
+# 8. Install remaining requirements
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# 7. Copy the entire project source code into the container.
+# 9. Copy source and install gr00t
 COPY . .
+RUN pip3 install -e .
 
-# 8. Install the gr00t project itself.
-RUN pip3 install .
-
-# 9. Set the default command. The cluster batch job will override this.
-CMD ["/bin/bash"]
+# 10. Permissions fix
+RUN chmod -R 777 /workspace

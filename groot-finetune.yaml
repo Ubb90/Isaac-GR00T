@@ -1,0 +1,82 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # The cluster will generate a unique name like groot-cube-finetune-abcde
+  generateName: groot-cube-finetune-
+  namespace: pgr25fin
+spec:
+  backoffLimit: 0 # Don't restart automatically if the python script crashes
+  template:
+    spec:
+      # Required to read/write to the PVC
+      serviceAccountName: containerroot
+
+      # Request A6000 nodes (or change to RTX-4090 if preferred)
+      nodeSelector:
+        nvidia.com/gpu.product: "NVIDIA-RTX-A6000"
+
+      volumes:
+      # Mount your personal storage claim
+      - name: personal-storage
+        persistentVolumeClaim:
+          claimName: pgr25finvol1claim
+      # Shared memory is required for multi-GPU training
+      - name: dshm
+        emptyDir:
+          medium: Memory
+
+      containers:
+      - name: trainer
+        image: docker.io/fkgsoftware/groot-finetune:v1
+        imagePullPolicy: Always
+
+        # Run as root to avoid permission errors on the mounted storage
+        securityContext:
+          runAsUser: 0
+
+        resources:
+          requests:
+            cpu: "16"
+            memory: "64Gi"
+            nvidia.com/gpu: "1" # Requesting 2 GPUs
+          limits:
+            cpu: "24"
+            memory: "128Gi"
+            nvidia.com/gpu: "1"
+
+        volumeMounts:
+        - name: personal-storage
+          mountPath: /data
+        - name: dshm
+          mountPath: /dev/shm
+
+        env:
+        - name: WANDB_MODE
+          value: "offline" # Logs will be saved locally to /data/dataset/groot_track_cube_offset
+        - name: PYTHONUNBUFFERED
+          value: "1"
+
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            echo "--- STARTING GR00T FINETUNE ---"
+            nvidia-smi
+
+            # Create output directory if it doesn't exist
+            mkdir -p /data/dataset/groot_track_cube_offset
+
+            # Run the training script
+            # Mapped '/media/baxter/OneDriveBackup' -> '/data'
+            python scripts/gr00t_finetune.py \
+              --dataset-path "/data/dataset/lerobot_pick_cube_v2_offset" \
+              --output-dir "/data/dataset/groot_track_cube_offset" \
+              --num-gpus 1 \
+              --max-steps 50000 \
+              --batch-size 16 \
+              --learning_rate 3e-5 \
+              --video-backend torchvision_av \
+              --data-config so100_track \
+              --no-tune-visual \
+              --lora-rank 2
+
+      restartPolicy: OnFailure

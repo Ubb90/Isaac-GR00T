@@ -2,6 +2,7 @@
 
 # Source Code Snapshot Generator for Isaac GR00T
 # Creates a comprehensive markdown file containing all pertinent source code
+# Optimized for LLM coding agent context
 
 OUTPUT_FILE="source_snapshot.md"
 TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
@@ -13,6 +14,9 @@ INCLUDE_DIRS=(
     "tests"
     "examples"
     "deployment_scripts"
+    "getting_started"
+    "ros_ws"
+    ".github"
 )
 
 # File extensions to include
@@ -27,6 +31,10 @@ INCLUDE_EXTENSIONS=(
     "*.md"
     "*.cfg"
     "*.ini"
+    "*.xml"
+    "*.launch"
+    "*.urdf"
+    "*.xacro"
 )
 
 # Directories to exclude (relative patterns)
@@ -51,6 +59,7 @@ EXCLUDE_DIRS=(
     "wandb"
     ".ruff_cache"
     ".mypy_cache"
+    "media"
 )
 
 # Files to exclude
@@ -79,18 +88,33 @@ EXCLUDE_FILES=(
     "*.zip"
     "*.tar"
     "*.gz"
+    "source_snapshot.md"
+    "Dockerfile.bak"
 )
 
 # Important root-level files to always include
 ROOT_FILES=(
     "README.md"
     "CLAUDE.md"
+    "CONTRIBUTING.md"
+    "LICENSE"
     "setup.py"
     "pyproject.toml"
     "requirements.txt"
     "Makefile"
     ".gitignore"
-    "LICENSE"
+    ".gitattributes"
+    "Dockerfile"
+    "orin.Dockerfile"
+    "thor.Dockerfile"
+    "docker-compose.yml"
+    "docker-compose.yaml"
+    "groot-finetune-job.yaml"
+    ".dockerignore"
+    ".env.example"
+    "setup.cfg"
+    "tox.ini"
+    "poetry.lock"
 )
 
 # Function to check if file should be excluded
@@ -142,6 +166,8 @@ get_language() {
         md) echo "markdown" ;;
         txt) echo "text" ;;
         cfg|ini) echo "ini" ;;
+        xml|launch|urdf|xacro) echo "xml" ;;
+        Dockerfile) echo "dockerfile" ;;
         *) echo "" ;;
     esac
 }
@@ -171,6 +197,117 @@ echo "This document contains a comprehensive snapshot of the source code in the 
 echo "It is intended to provide context to LLM agents for understanding and working with this codebase." >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
 
+# Add environment context
+echo "---" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+echo "# Environment & Context" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+# System information
+echo "## System Information" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+echo '```' >> "$OUTPUT_FILE"
+echo "Timestamp: $TIMESTAMP" >> "$OUTPUT_FILE"
+echo "OS: $(uname -s)" >> "$OUTPUT_FILE"
+echo "Kernel: $(uname -r)" >> "$OUTPUT_FILE"
+echo "Architecture: $(uname -m)" >> "$OUTPUT_FILE"
+if command -v python3 &> /dev/null; then
+    echo "Python: $(python3 --version 2>&1)" >> "$OUTPUT_FILE"
+fi
+if command -v python &> /dev/null; then
+    echo "Python (fallback): $(python --version 2>&1)" >> "$OUTPUT_FILE"
+fi
+if command -v pip3 &> /dev/null; then
+    echo "pip: $(pip3 --version 2>&1)" >> "$OUTPUT_FILE"
+fi
+if command -v poetry &> /dev/null; then
+    echo "Poetry: $(poetry --version 2>&1)" >> "$OUTPUT_FILE"
+fi
+if command -v docker &> /dev/null; then
+    echo "Docker: $(docker --version 2>&1)" >> "$OUTPUT_FILE"
+fi
+if command -v git &> /dev/null; then
+    echo "Git: $(git --version 2>&1)" >> "$OUTPUT_FILE"
+fi
+echo '```' >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+# Git repository information
+if [ -d ".git" ]; then
+    echo "## Git Repository Information" >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+    echo "Repository: $(git config --get remote.origin.url 2>/dev/null || echo 'N/A')" >> "$OUTPUT_FILE"
+    echo "Current Branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'N/A')" >> "$OUTPUT_FILE"
+    echo "Latest Commit: $(git log -1 --format='%H' 2>/dev/null || echo 'N/A')" >> "$OUTPUT_FILE"
+    echo "Commit Message: $(git log -1 --format='%s' 2>/dev/null || echo 'N/A')" >> "$OUTPUT_FILE"
+    echo "Author: $(git log -1 --format='%an <%ae>' 2>/dev/null || echo 'N/A')" >> "$OUTPUT_FILE"
+    echo "Date: $(git log -1 --format='%ad' 2>/dev/null || echo 'N/A')" >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+    echo "Recent Commits (last 10):" >> "$OUTPUT_FILE"
+    git log -10 --oneline 2>/dev/null >> "$OUTPUT_FILE" || echo "N/A" >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+    echo "Git Status:" >> "$OUTPUT_FILE"
+    git status --short 2>/dev/null >> "$OUTPUT_FILE" || echo "N/A" >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+fi
+
+# Python dependencies
+echo "## Python Dependencies" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+if [ -f "requirements.txt" ]; then
+    echo "### requirements.txt" >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+    cat requirements.txt >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+fi
+
+if [ -f "pyproject.toml" ]; then
+    echo "### pyproject.toml (dependencies section)" >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+    echo '```toml' >> "$OUTPUT_FILE"
+    cat pyproject.toml >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+fi
+
+# Installed packages (if pip is available)
+if command -v pip3 &> /dev/null; then
+    echo "### Installed Packages (pip freeze)" >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+    pip3 freeze 2>/dev/null >> "$OUTPUT_FILE" || echo "Unable to retrieve installed packages" >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+fi
+
+# Poetry lock info (if available)
+if [ -f "poetry.lock" ] && command -v poetry &> /dev/null; then
+    echo "### Poetry Dependencies" >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+    poetry show 2>/dev/null >> "$OUTPUT_FILE" || echo "Unable to retrieve Poetry dependencies" >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+fi
+
+# Project structure
+echo "## Project Directory Structure" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+echo '```' >> "$OUTPUT_FILE"
+if command -v tree &> /dev/null; then
+    tree -L 3 -I '__pycache__|*.pyc|.git|.pytest_cache|*.egg-info|build|dist|venv|env|node_modules|demo_data|data|datasets|checkpoints|outputs|logs|wandb|.ruff_cache|.mypy_cache|media' 2>/dev/null >> "$OUTPUT_FILE" || echo "Tree command failed" >> "$OUTPUT_FILE"
+else
+    # Fallback to find-based tree
+    find . -maxdepth 3 -not -path '*/\.*' -not -path '*/__pycache__/*' -not -path '*/venv/*' -not -path '*/env/*' -not -path '*/demo_data/*' -not -path '*/data/*' -not -path '*/datasets/*' -not -path '*/checkpoints/*' -not -path '*/outputs/*' -not -path '*/logs/*' -not -path '*/wandb/*' -not -path '*/media/*' 2>/dev/null | sort >> "$OUTPUT_FILE" || echo "Unable to generate directory structure" >> "$OUTPUT_FILE"
+fi
+echo '```' >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
 # Add table of contents placeholder
 echo "---" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
@@ -192,11 +329,21 @@ done
 for dir in "${INCLUDE_DIRS[@]}"; do
     if [ -d "$dir" ]; then
         echo "Scanning $dir/..." >&2
+
+        # Build find command with proper quoting
+        find_args=()
+        for ext in "${INCLUDE_EXTENSIONS[@]}"; do
+            if [ ${#find_args[@]} -gt 0 ]; then
+                find_args+=("-o")
+            fi
+            find_args+=("-name" "$ext")
+        done
+
         while IFS= read -r -d '' file; do
             if ! should_exclude_file "$file"; then
                 all_files+=("$file")
             fi
-        done < <(find "$dir" -type f \( $(printf " -name %s -o" "${INCLUDE_EXTENSIONS[@]}" | sed 's/ -o$//') \) -print0 2>/dev/null)
+        done < <(find "$dir" -type f \( "${find_args[@]}" \) -print0 2>/dev/null)
     fi
 done
 
@@ -242,26 +389,113 @@ for file in "${sorted_files[@]}"; do
     add_file_to_snapshot "$file"
 done
 
-# Add summary at the end
+# Add summary and statistics at the end
 echo "" >> "$OUTPUT_FILE"
 echo "---" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
-echo "# Summary" >> "$OUTPUT_FILE"
+echo "# Summary & Statistics" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+echo "## File Statistics" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
 echo "**Total files included:** $total" >> "$OUTPUT_FILE"
 echo "**Generated:** $TIMESTAMP" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
+
+# Count files by type
+echo "### Files by Extension" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+echo '```' >> "$OUTPUT_FILE"
+for file in "${sorted_files[@]}"; do
+    echo "${file##*.}"
+done | sort | uniq -c | sort -rn >> "$OUTPUT_FILE"
+echo '```' >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+# Count files by directory
+echo "### Files by Directory" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+echo '```' >> "$OUTPUT_FILE"
+for file in "${sorted_files[@]}"; do
+    dirname "$file"
+done | sort | uniq -c | sort -rn >> "$OUTPUT_FILE"
+echo '```' >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+# Code statistics (lines of code)
+if command -v wc &> /dev/null; then
+    echo "### Lines of Code" >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+
+    total_lines=0
+    python_lines=0
+    yaml_lines=0
+    sh_lines=0
+    md_lines=0
+
+    for file in "${sorted_files[@]}"; do
+        if [ -f "$file" ]; then
+            lines=$(wc -l < "$file" 2>/dev/null || echo 0)
+            total_lines=$((total_lines + lines))
+
+            case "${file##*.}" in
+                py) python_lines=$((python_lines + lines)) ;;
+                yaml|yml) yaml_lines=$((yaml_lines + lines)) ;;
+                sh) sh_lines=$((sh_lines + lines)) ;;
+                md) md_lines=$((md_lines + lines)) ;;
+            esac
+        fi
+    done
+
+    echo "Total lines: $total_lines" >> "$OUTPUT_FILE"
+    echo "Python (.py): $python_lines" >> "$OUTPUT_FILE"
+    echo "YAML (.yaml/.yml): $yaml_lines" >> "$OUTPUT_FILE"
+    echo "Shell (.sh): $sh_lines" >> "$OUTPUT_FILE"
+    echo "Markdown (.md): $md_lines" >> "$OUTPUT_FILE"
+    echo "Other: $((total_lines - python_lines - yaml_lines - sh_lines - md_lines))" >> "$OUTPUT_FILE"
+    echo '```' >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+fi
+
+echo "## Included Content" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
 echo "This snapshot includes:" >> "$OUTPUT_FILE"
 for dir in "${INCLUDE_DIRS[@]}"; do
     if [ -d "$dir" ]; then
-        echo "- \`$dir/\` directory" >> "$OUTPUT_FILE"
+        file_count=$(find "$dir" -type f 2>/dev/null | wc -l)
+        echo "- \`$dir/\` directory ($file_count files)" >> "$OUTPUT_FILE"
     fi
 done
 echo "- Root-level configuration and documentation files" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
-echo "Excluded: binaries, model weights, datasets, cache files, and generated artifacts." >> "$OUTPUT_FILE"
+
+echo "## Excluded Content" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+echo "Excluded from snapshot:" >> "$OUTPUT_FILE"
+echo "- Binaries and compiled files (.pyc, .so, .bin, etc.)" >> "$OUTPUT_FILE"
+echo "- Model weights and checkpoints (.pt, .pth, .ckpt, .safetensors, etc.)" >> "$OUTPUT_FILE"
+echo "- Data files and datasets (datasets/, data/, demo_data/)" >> "$OUTPUT_FILE"
+echo "- Media files (.jpg, .png, .gif, .mp4, media/)" >> "$OUTPUT_FILE"
+echo "- Cache and temporary files (__pycache__, .pytest_cache, etc.)" >> "$OUTPUT_FILE"
+echo "- Build artifacts (build/, dist/, *.egg-info/)" >> "$OUTPUT_FILE"
+echo "- Virtual environments (venv/, env/, .venv/)" >> "$OUTPUT_FILE"
+echo "- Logs and outputs (logs/, outputs/, wandb/)" >> "$OUTPUT_FILE"
+echo "- Version control (.git/)" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+echo "## Snapshot File Information" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+echo '```' >> "$OUTPUT_FILE"
+echo "Output file: $OUTPUT_FILE" >> "$OUTPUT_FILE"
+if [ -f "$OUTPUT_FILE" ]; then
+    echo "File size: $(du -h "$OUTPUT_FILE" | cut -f1)" >> "$OUTPUT_FILE"
+    echo "Line count: $(wc -l < "$OUTPUT_FILE")" >> "$OUTPUT_FILE"
+fi
+echo '```' >> "$OUTPUT_FILE"
 
 echo "" >&2
 echo "✓ Source snapshot created: $OUTPUT_FILE" >&2
 echo "  Total files: $total" >&2
 echo "  File size: $(du -h "$OUTPUT_FILE" | cut -f1)" >&2
+echo "  Total lines in snapshot: $(wc -l < "$OUTPUT_FILE")" >&2
