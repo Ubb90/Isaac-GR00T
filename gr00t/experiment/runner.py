@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 
 import torch
-from transformers import EarlyStoppingCallback, TrainingArguments, set_seed
+from transformers import TrainingArguments, set_seed
 
 from gr00t.data.dataset import LeRobotMixtureDataset, LeRobotSingleDataset
 from gr00t.experiment.trainer import DualBrainTrainer
@@ -26,6 +26,7 @@ from gr00t.model.gr00t_n1 import GR00T_N1_5
 from gr00t.model.transforms import DefaultDataCollator
 from gr00t.utils.experiment import (
     CheckpointFormatCallback,
+    TrainingLossEarlyStoppingCallback,
     safe_save_model_for_hf_trainer,
 )
 
@@ -146,14 +147,11 @@ class TrainRunner:
             )
 
         # Create the trainer
-        # Use the same dataset for evaluation when early stopping is enabled
-        eval_dataset = train_dataset if self.enable_early_stopping else None
-        
+        # Note: We don't use eval_dataset - early stopping monitors training loss directly
         trainer = DualBrainTrainer(
             model=model,
             args=training_args,
             train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
             data_collator=data_collator,
             compute_dtype=compute_dtype,
         )
@@ -167,13 +165,13 @@ class TrainRunner:
 
         # Add early stopping callback if enabled
         if self.enable_early_stopping:
-            early_stopping_callback = EarlyStoppingCallback(
-                early_stopping_patience=self.early_stopping_patience,
-                early_stopping_threshold=self.early_stopping_threshold,
+            early_stopping_callback = TrainingLossEarlyStoppingCallback(
+                patience=self.early_stopping_patience,
+                threshold=self.early_stopping_threshold,
             )
             trainer.add_callback(early_stopping_callback)
             print(
-                f"Early stopping enabled with patience={self.early_stopping_patience} "
+                f"Early stopping enabled (training loss monitoring) with patience={self.early_stopping_patience} "
                 f"and threshold={self.early_stopping_threshold}"
             )
 

@@ -17,7 +17,7 @@ import shutil
 from pathlib import Path
 
 import torch
-from transformers import Trainer, TrainerCallback
+from transformers import Trainer, TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 
 
 def safe_save_model_for_hf_trainer(trainer: Trainer, output_dir: str):
@@ -60,3 +60,76 @@ class CheckpointFormatCallback(TrainerCallback):
                 exp_cfg_dst = checkpoint_dir / self.exp_cfg_dir.name
                 if self.exp_cfg_dir.exists():
                     shutil.copytree(self.exp_cfg_dir, exp_cfg_dst, dirs_exist_ok=True)
+
+
+class TrainingLossEarlyStoppingCallback(TrainerCallback):
+    """
+    Early stopping callback that monitors training loss instead of evaluation loss.
+    This is more efficient as it doesn't require a separate evaluation step.
+    
+    Stops training when the training loss stops improving (decreasing) for a specified
+    number of logging steps.
+    """
+
+    def __init__(self, patience: int = 3, threshold: float = 0.0):
+        """
+        Args:
+            patience: Number of logging steps with no improvement after which training will be stopped.
+            threshold: Minimum change in the monitored metric to qualify as an improvement.
+        """
+        self.patience = patience
+        self.threshold = threshold
+        self.best_loss = None
+        self.wait = 0
+        self.stopped_step = 0
+
+    def on_log(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        logs=None,
+        **kwargs,
+    ):
+        """Check if training should stop based on training loss improvement."""
+        if logs is None:
+            return control
+
+        # Get the current training loss
+        current_loss = logs.get("loss")
+        if current_loss is None:
+            return control
+
+        # Initialize best_loss on first call
+        if self.best_loss is None:
+            self.best_loss = current_loss
+            if state.is_world_process_zero:
+                print(f"[Early Stopping] Initial loss: {current_loss:.6f}")
+            return control
+
+        # Check if there's an improvement
+        if current_loss < self.best_loss - self.threshold:
+            self.best_loss = current_loss
+            self.wait = 0
+            if state.is_world_process_zero:
+                print(
+                    f"[Early Stopping] Loss improved to {current_loss:.6f} at step {state.global_step}"
+                )
+        else:
+            self.wait += 1
+            if state.is_world_process_zero:
+                print(
+                    f"[Early Stopping] No improvement for {self.wait}/{self.patience} checks "
+                    f"(current: {current_loss:.6f}, best: {self.best_loss:.6f})"
+                )
+
+            if self.wait >= self.patience:
+                self.stopped_step = state.global_step
+                control.should_training_stop = True
+                if state.is_world_process_zero:
+                    print(
+                        f"[Early Stopping] Training stopped at step {self.stopped_step}. "
+                        f"Best loss was {self.best_loss:.6f}"
+                    )
+
+        return control
