@@ -18,7 +18,12 @@ spec:
       - name: personal-storage
         persistentVolumeClaim:
           claimName: pgr25florentvol1claim
- 
+      
+      - name: ssh-key
+        secret:
+          secretName: launcher-ssh-key
+          defaultMode: 256
+
       # 2. Input Data Storage (Shared)
       - name: shared-storage
         persistentVolumeClaim:
@@ -54,7 +59,9 @@ spec:
           readOnly: true
         - name: dshm
           mountPath: /dev/shm
- 
+        - name: ssh-key
+          mountPath: /root/.ssh
+
         env:
         - name: WANDB_MODE
           value: "offline"
@@ -66,7 +73,11 @@ spec:
           - |
             echo "--- STARTING GR00T FINETUNE ---"
             nvidia-smi
- 
+            git remote remove origin
+            git remote add origin https://github.com/Ubb90/Isaac-GR00T.git
+            git stash
+            git pull origin main
+            
             # 1. Verify Dataset Path before starting
             DATASET_PATH="/mnt/datasets/letrack/so101track_cube_swap_lerobot_random/"
  

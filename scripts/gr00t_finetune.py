@@ -383,7 +383,7 @@ def main(config: ArgsConfig):
         max_steps=config.max_steps,
         save_strategy="steps",
         save_steps=config.save_steps,
-        evaluation_strategy="steps" if config.enable_early_stopping else "no",
+        eval_strategy="steps" if config.enable_early_stopping else "no",
         eval_steps=config.eval_steps if config.enable_early_stopping else None,
         save_total_limit=10,
         report_to=config.report_to,
