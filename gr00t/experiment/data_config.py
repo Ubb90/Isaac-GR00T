@@ -267,7 +267,7 @@ class So100TrackDataConfig(BaseDataConfig):
     action_keys = ["action.right_arm_ee_pose", "action.right_arm_ee_rot", "action.gripper"]
     language_keys = ["annotation.human.action.task_description"]
     observation_indices = [0]
-    action_indices = [0, 1, 2, 3, 4, 5, 6, 7]  # Explicitly list the 8 action indices
+    action_indices = list(range(16))
 
     def transform(self) -> ModalityTransform:
         transforms = [
@@ -310,6 +310,13 @@ class So100TrackDataConfig(BaseDataConfig):
             ),
         ]
         return ComposedModalityTransform(transforms=transforms)
+
+
+###########################################################################################
+
+
+class So100TrackLongHorizonDataConfig(So100TrackDataConfig):
+    action_indices = list(range(150))
 
 
 ###########################################################################################
@@ -834,6 +841,7 @@ DATA_CONFIG_MAP = {
     "single_panda_gripper": SinglePandaGripperDataConfig(),
     "so100": So100DataConfig(),
     "so100_track": So100TrackDataConfig(),
+    "so100_track_long": So100TrackLongHorizonDataConfig(),
     "so100_dualcam": So100DualCamDataConfig(),
     "unitree_g1": UnitreeG1DataConfig(),
     "unitree_g1_full_body": UnitreeG1FullBodyDataConfig(),

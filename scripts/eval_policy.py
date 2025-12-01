@@ -13,6 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Fix Qt/matplotlib display issues - must be before any matplotlib imports
+import os
+os.environ['MPLBACKEND'] = 'Agg'
+# Prevent Qt issues with OpenCV
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+
 import warnings
 from dataclasses import dataclass, field
 from typing import List, Literal
@@ -52,7 +58,7 @@ class ArgsConfig:
     plot: bool = False
     """Whether to plot the images."""
 
-    modality_keys: List[str] = field(default_factory=lambda: ["right_arm", "left_arm"])
+    modality_keys: List[str] = field(default_factory=lambda: ["right_arm_ee_pose", "right_arm_ee_rot", "gripper"])
     """Modality keys to evaluate."""
 
     data_config: str = "fourier_gr1_arms_only"
@@ -153,10 +159,17 @@ def main(args: ArgsConfig):
     print("Total trajectories:", len(dataset.trajectory_lengths))
     print("All trajectories:", dataset.trajectory_lengths)
     print("Running on all trajs with modality keys:", args.modality_keys)
-
+    modality_config = data_config.modality_config()
     all_mse = []
     for traj_id in range(args.start_traj, args.start_traj + args.trajs):
         print("Running trajectory:", traj_id)
+        
+        # Auto-generate save path if plotting is enabled but no path provided
+        plot_path = args.save_plot_path
+        if args.plot and plot_path is None:
+            plot_path = f"trajectory_plot_traj{traj_id}.png"
+            print(f"Auto-saving plot to: {plot_path}")
+        
         mse = calc_mse_for_single_trajectory(
             policy,
             dataset,
@@ -166,7 +179,7 @@ def main(args: ArgsConfig):
             action_horizon=args.action_horizon,
             plot=args.plot,
             plot_state=args.plot_state,
-            save_plot_path=args.save_plot_path,
+            save_plot_path=plot_path,
         )
         print("MSE:", mse)
         all_mse.append(mse)

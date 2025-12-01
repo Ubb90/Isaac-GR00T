@@ -103,11 +103,11 @@ class Gr00tROS2InferenceClient:
         Args:
             camera_images: Dict mapping camera names to RGB images (H, W, 3)
             joint_states: Array of 6 joint values [5 arm joints + gripper]
-            robot_pose: Array of 7 values [x, y, z, qx, qy, qz, qw]
+            robot_pose: Array of 7 values [x, y, z, qw, qx, qy, qz]
             lang: Language instruction string
             
         Returns:
-            List of 6-DOF pose arrays [x, y, z, qx, qy, qz, qw] for each timestep
+            List of 6-DOF pose arrays [x, y, z, qw, qx, qy, qz] for each timestep
         """
         print("\n" + "="*80)
         print("DEBUG: Getting action from policy")
@@ -142,7 +142,7 @@ class Gr00tROS2InferenceClient:
         # Use real robot pose data from the topic if available
         if robot_pose is not None and len(robot_pose) >= 7:
             obs_dict["state.right_arm_ee_pose"] = robot_pose[:3].astype(np.float64)  # [x, y, z]
-            obs_dict["state.right_arm_ee_rot"] = robot_pose[3:7].astype(np.float64)  # [qx, qy, qz, qw]
+            obs_dict["state.right_arm_ee_rot"] = robot_pose[3:7].astype(np.float64)  # [qw, qx, qy, qz]
             print(f"DEBUG: Current EE pose: {robot_pose[:3]}")
             print(f"DEBUG: Current EE rotation: {robot_pose[3:7]}")
         else:
@@ -208,7 +208,7 @@ class Gr00tROS2InferenceClient:
             
         # Extract right arm end effector rotation
         if "action.right_arm_ee_rot" in action_chunk:
-            ee_rot = action_chunk["action.right_arm_ee_rot"][idx]   # [qx, qy, qz, qw]
+            ee_rot = action_chunk["action.right_arm_ee_rot"][idx]   # [qw, qx, qy, qz]
             result['rotation'] = np.array(ee_rot[:4], dtype=np.float64)
         else:
             raise ValueError("action.right_arm_ee_rot not found in action chunk")
@@ -279,6 +279,7 @@ class Gr00tROS2Node(Node):
         self.latest_robot_pose = None
         self.action_buffer = []
         self.action_index = 0
+        self.detected_action_horizon = None  # Will be set from first policy response
         
         # Tracking for debugging
         self.last_published_target = None
@@ -379,9 +380,9 @@ class Gr00tROS2Node(Node):
                 if abs(old_mean - new_mean) < 0.1:
                     self.get_logger().debug(f"[CAMERA UPDATE] {camera_key}: UNCHANGED (mean={new_mean:.2f})")
                 else:
-                    self.get_logger().info(f"[CAMERA UPDATE] {camera_key}: CHANGED (old_mean={old_mean:.2f}, new_mean={new_mean:.2f})")
+                    self.get_logger().debug(f"[CAMERA UPDATE] {camera_key}: CHANGED (old_mean={old_mean:.2f}, new_mean={new_mean:.2f})")
             else:
-                self.get_logger().info(f"[CAMERA UPDATE] {camera_key}: FIRST frame (shape={cv_image.shape}, mean={cv_image.mean():.2f})")
+                self.get_logger().debug(f"[CAMERA UPDATE] {camera_key}: FIRST frame (shape={cv_image.shape}, mean={cv_image.mean():.2f})")
                 
             self.camera_images[camera_key] = cv_image
         except Exception as e:
@@ -396,7 +397,7 @@ class Gr00tROS2Node(Node):
 
             new_pose = np.array([
                 pos.x, pos.y, pos.z,
-                orient.x, orient.y, orient.z, orient.w
+                orient.w, orient.x, orient.y, orient.z
             ])
             
             # Check if pose has changed and calculate movement speed
@@ -413,7 +414,7 @@ class Gr00tROS2Node(Node):
                         self.total_distance_moved += pose_delta
                         
                         if pose_delta >= 0.001:
-                            self.get_logger().info(
+                            self.get_logger().debug(
                                 f"[POSE UPDATE] CHANGED by {pose_delta:.4f}m - "
                                 f"New pos=[{pos.x:.3f}, {pos.y:.3f}, {pos.z:.3f}] - "
                                 f"Speed: {speed:.4f} m/s"
@@ -427,13 +428,13 @@ class Gr00tROS2Node(Node):
                     if pose_delta < 0.001:
                         self.get_logger().debug(f"[POSE UPDATE] UNCHANGED (pos=[{pos.x:.3f}, {pos.y:.3f}, {pos.z:.3f}])")
                     else:
-                        self.get_logger().info(f"[POSE UPDATE] CHANGED by {pose_delta:.4f}m - New pos=[{pos.x:.3f}, {pos.y:.3f}, {pos.z:.3f}]")
+                        self.get_logger().debug(f"[POSE UPDATE] CHANGED by {pose_delta:.4f}m - New pos=[{pos.x:.3f}, {pos.y:.3f}, {pos.z:.3f}]")
                         self.last_pose_update_time = current_time
             else:
-                self.get_logger().info(f"[POSE UPDATE] FIRST pose - pos=[{pos.x:.3f}, {pos.y:.3f}, {pos.z:.3f}]")
+                self.get_logger().debug(f"[POSE UPDATE] FIRST pose - pos=[{pos.x:.3f}, {pos.y:.3f}, {pos.z:.3f}]")
                 self.last_pose_update_time = current_time
             
-            # Store as [x, y, z, qx, qy, qz, qw]
+            # Store as [x, y, z, qw, qx, qy, qz]
             self.latest_robot_pose = new_pose
         except Exception as e:
             self.get_logger().error(f"Error processing robot pose: {e}")
@@ -449,9 +450,9 @@ class Gr00tROS2Node(Node):
                 if joint_delta < 0.001:
                     self.get_logger().debug(f"[JOINT UPDATE] UNCHANGED (joints={new_joints[:6]})")
                 else:
-                    self.get_logger().info(f"[JOINT UPDATE] CHANGED by {joint_delta:.4f} rad - New joints={new_joints[:6]}")
+                    self.get_logger().debug(f"[JOINT UPDATE] CHANGED by {joint_delta:.4f} rad - New joints={new_joints[:6]}")
             else:
-                self.get_logger().info(f"[JOINT UPDATE] FIRST joint state - joints={new_joints[:6]}")
+                self.get_logger().debug(f"[JOINT UPDATE] FIRST joint state - joints={new_joints[:6]}")
             
             # Just store the joint positions directly as numpy array
             self.latest_joint_states = new_joints
@@ -551,7 +552,27 @@ class Gr00tROS2Node(Node):
             self.action_buffer = action_data
             self.action_index = 0
             
-            self.get_logger().info(f">>> Received {len(self.action_buffer)} actions in new chunk")
+            # Detect and validate action horizon
+            received_horizon = len(self.action_buffer)
+            self.get_logger().info(f">>> Received {received_horizon} actions in new chunk")
+            
+            if self.detected_action_horizon is None:
+                self.detected_action_horizon = received_horizon
+                self.get_logger().info(
+                    f">>> Detected action horizon from policy: {self.detected_action_horizon}"
+                )
+                if self.config.action_horizon is not None and self.config.action_horizon != received_horizon:
+                    self.get_logger().warn(
+                        f"!!! WARNING: Config action_horizon ({self.config.action_horizon}) != "
+                        f"received action horizon ({received_horizon}). "
+                        f"Using received value ({received_horizon}). "
+                        f"To change action horizon, modify the data config on the policy server."
+                    )
+            elif received_horizon != self.detected_action_horizon:
+                self.get_logger().warn(
+                    f"!!! WARNING: Received action horizon changed from {self.detected_action_horizon} "
+                    f"to {received_horizon}. This is unexpected!"
+                )
             
             # Execute first action
             if self.action_buffer:
@@ -602,10 +623,10 @@ class Gr00tROS2Node(Node):
                 z=float(action_dict['pose'][2])
             )
             pose_msg.orientation = Quaternion(
-                x=float(action_dict['rotation'][0]), 
-                y=float(action_dict['rotation'][1]), 
-                z=float(action_dict['rotation'][2]), 
-                w=float(action_dict['rotation'][3])
+                x=float(action_dict['rotation'][1]), 
+                y=float(action_dict['rotation'][2]), 
+                z=float(action_dict['rotation'][3]), 
+                w=float(action_dict['rotation'][0])
             )
 
             # pose_msg.orientation = Quaternion(
@@ -643,8 +664,15 @@ class ROS2EvalConfig:
     policy_port: int = 5555
     
     # Task configuration
-    lang_instruction: str = "Pick up the cube and place it on the left of the robot."
-    action_horizon: int = 8
+    lang_instruction: str = "Swap the 2 cubes position using a third location"
+    action_horizon: Optional[int] = None  
+    """Action horizon (number of actions predicted per policy query). 
+    If None, will be automatically detected from the policy server's response.
+    The actual action horizon is determined by the policy server's data config (action_indices).
+    This parameter is informational - to actually change the action horizon, you need to:
+    1. Modify the data config on the policy server (e.g., change action_indices in data_config.py)
+    2. Restart the policy server with the new config
+    Common values: 8 for So100Track, 16 for other configs."""
     
     # ROS2 topic configuration
     camera_topics: List[str] = None
