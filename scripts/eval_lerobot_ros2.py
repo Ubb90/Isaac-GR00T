@@ -640,8 +640,8 @@ class Gr00tROS2Node(Node):
             
             # Publish gripper status (boolean based on value threshold)
             gripper_msg = Bool()
-            # Convert gripper value to boolean (> 0.5 means closed/True)
-            gripper_msg.data = bool(action_dict['gripper'] > 0.5)
+            # Convert gripper value to boolean (< 0.5 means open/True)
+            gripper_msg.data = bool(action_dict['gripper'] < 0.5)
             self.gripper_pub.publish(gripper_msg)
             
             self.get_logger().info(
@@ -664,7 +664,8 @@ class ROS2EvalConfig:
     policy_port: int = 5555
     
     # Task configuration
-    lang_instruction: str = "Swap the 2 cubes position using a third location"
+    # lang_instruction: str = "Swap the 2 cubes position using a third location"
+    lang_instruction: str = "pick up the cube and move it to the red area"
     action_horizon: Optional[int] = None  
     """Action horizon (number of actions predicted per policy query). 
     If None, will be automatically detected from the policy server's response.

@@ -316,7 +316,9 @@ class So100TrackDataConfig(BaseDataConfig):
 
 
 class So100TrackLongHorizonDataConfig(So100TrackDataConfig):
-    action_indices = list(range(150))
+    action_indices = list(range(64))
+class So100TrackVeryLongHorizonDataConfig(So100TrackDataConfig):
+    action_indices = list(range(128))
 class So100TrackShortHorizonDataConfig(So100TrackDataConfig):
     action_indices = list(range(8))
 class So100TrackMediumHorizonDataConfig(So100TrackDataConfig):
@@ -846,6 +848,7 @@ DATA_CONFIG_MAP = {
     "so100": So100DataConfig(),
     "so100_track": So100TrackDataConfig(),
     "so100_track_long": So100TrackLongHorizonDataConfig(),
+    "so100_track_very_long": So100TrackVeryLongHorizonDataConfig(),
     "so100_track_short": So100TrackShortHorizonDataConfig(),
     "so100_track_medium": So100TrackMediumHorizonDataConfig(),
     "so100_dualcam": So100DualCamDataConfig(),

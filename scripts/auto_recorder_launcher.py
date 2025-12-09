@@ -24,10 +24,15 @@ from pathlib import Path
 
 
 class AutoRecorderLauncher(Node):
-    def __init__(self):
+    def __init__(self, policy_type='groot', policy_path=None, wait_for_convergence='True', control_frequency=3.0, root=None):
         super().__init__('auto_recorder_launcher')
         
-        self.get_logger().info('Auto Recorder Launcher - One-shot mode')
+        self.policy_type = policy_type
+        self.policy_path = policy_path
+        self.wait_for_convergence = wait_for_convergence
+        self.control_frequency = control_frequency
+        self.root = root
+        self.get_logger().info(f'Auto Recorder Launcher - One-shot mode (Policy: {self.policy_type})')
         self.save_path = None
         self.done = False
         self.recording_started = False  # Track if recording was started
@@ -295,6 +300,7 @@ class AutoRecorderLauncher(Node):
             republisher_cmd = (
                 f'source ~/bin/miniforge/etc/profile.d/conda.sh && '
                 f'conda deactivate && '
+                f'export PYTHONPATH="" && '
                 f'conda activate lerobot && '
                 f'source {ros_ws_path} && '
                 f'ros2 launch so_100_track dataset_republisher.launch.py dataset_path:={dataset_path}'
@@ -314,14 +320,38 @@ class AutoRecorderLauncher(Node):
             # Wait a moment for republisher to start
             time.sleep(2)
             
-            # Build the command for eval_lerobot_ros2
-            # Get the directory where this script is located
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            eval_script_path = os.path.join(script_dir, 'eval_lerobot_ros2.py')
+            # Build the command for policy evaluation
+            if self.policy_type == 'groot':
+                # Get the directory where this script is located
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                eval_script_path = os.path.join(script_dir, 'eval_lerobot_ros2.py')
+                
+                # You may need to adjust these parameters based on your setup
+                eval_cmd = f'python3 {eval_script_path} --wait_for_convergence {self.wait_for_convergence} --control_frequency {self.control_frequency}'
             
-            # You may need to adjust these parameters based on your setup
-            eval_cmd = f'python3 {eval_script_path} --wait_for_convergence False --control_frequency 3'
+            elif self.policy_type == 'lerobot':
+                lerobot_script_path = "/home/baxter/Documents/lerobot/src/lerobot/scripts/lerobot_ros2_control.py"
+                
+                # Construct command with conda activation for lerobot
+                eval_cmd = (
+                    f'source ~/bin/miniforge/etc/profile.d/conda.sh && '
+                    f'conda deactivate && '
+                    f'export PYTHONPATH="" && '
+                    f'conda activate lerobot && '
+                    f'source {ros_ws_path} && '
+                    f'python {lerobot_script_path} --display_data=true'
+                )
+                
+                if self.policy_path:
+                    eval_cmd += f' --policy.path={self.policy_path}'
+                
+                if self.root:
+                    eval_cmd += f' --dataset.root={self.root}'
             
+            else:
+                self.get_logger().error(f'Unknown policy type: {self.policy_type}')
+                raise ValueError(f'Unknown policy type: {self.policy_type}')
+
             self.get_logger().info(f'Running eval command: {eval_cmd}')
             
             # Launch eval process (non-blocking)
@@ -374,9 +404,26 @@ class AutoRecorderLauncher(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    import argparse
     
-    node = AutoRecorderLauncher()
+    parser = argparse.ArgumentParser(description='Auto Recorder Launcher')
+    parser.add_argument('--policy_type', type=str, default='groot', choices=['groot', 'lerobot'], help='Type of policy to run')
+    parser.add_argument('--policy_path', type=str, default=None, help='Path to policy (for lerobot)')
+    parser.add_argument('--root', type=str, default=None, help='Root directory for dataset (for lerobot)')
+    parser.add_argument('--wait_for_convergence', type=str, default='True', help='Wait for convergence (for groot)')
+    parser.add_argument('--control_frequency', type=float, default=3.0, help='Control frequency (for groot)')
+    
+    parsed_args, remaining_args = parser.parse_known_args(args=args)
+    
+    rclpy.init(args=remaining_args)
+    
+    node = AutoRecorderLauncher(
+        policy_type=parsed_args.policy_type, 
+        policy_path=parsed_args.policy_path,
+        wait_for_convergence=parsed_args.wait_for_convergence,
+        control_frequency=parsed_args.control_frequency,
+        root=parsed_args.root
+    )
     shutdown_requested = {'value': False}
     
     # Setup signal handler for Ctrl+C
