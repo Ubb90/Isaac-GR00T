@@ -11,7 +11,7 @@ Usage:
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from std_srvs.srv import SetBool, Trigger
 import subprocess
 import shutil
@@ -21,10 +21,13 @@ import threading
 import signal
 import sys
 from pathlib import Path
+import glob
+import json
+import cv2
 
 
 class AutoRecorderLauncher(Node):
-    def __init__(self, policy_type='groot', policy_path=None, wait_for_convergence='True', control_frequency=3.0, root=None):
+    def __init__(self, policy_type='groot', policy_path=None, wait_for_convergence='True', control_frequency=3.0, root=None, num_episodes=1):
         super().__init__('auto_recorder_launcher')
         
         self.policy_type = policy_type
@@ -32,35 +35,55 @@ class AutoRecorderLauncher(Node):
         self.wait_for_convergence = wait_for_convergence
         self.control_frequency = control_frequency
         self.root = root
-        self.get_logger().info(f'Auto Recorder Launcher - One-shot mode (Policy: {self.policy_type})')
+        self.num_episodes = num_episodes
+        self.get_logger().info(f'Auto Recorder Launcher - (Policy: {self.policy_type}, Episodes: {self.num_episodes})')
         self.save_path = None
         self.done = False
         self.recording_started = False  # Track if recording was started
         self.running_processes = []  # Track running subprocesses
-    
-    def get_save_path_once(self):
-        """Get the save path from the topic once and return"""
+        self.task_completed = False
+        self.all_results = {}
+        
+        # Subscribe to task_completed topic
+        self.create_subscription(
+            Bool,
+            '/task_completed',
+            self.task_completed_callback,
+            10
+        )
+        
+        # Publisher to reset task_completed
+        self.task_completed_pub = self.create_publisher(Bool, '/task_completed', 10)
+        
         # Subscribe to save_path topic
-        subscription = self.create_subscription(
+        self.create_subscription(
             String,
             'environment/save_path',
             self.save_path_callback,
             10
         )
-        
+    
+    def task_completed_callback(self, msg):
+        """Callback when task is completed"""
+        if msg.data:
+            self.get_logger().info('Task completed signal received!')
+            self.task_completed = True
+
+    def get_save_path_once(self):
+        """Get the save path from the topic"""
         self.get_logger().info('Waiting for save path from environment/save_path...')
         
         # Spin until we get the message
-        while rclpy.ok() and not self.done:
+        while rclpy.ok() and self.save_path is None:
             rclpy.spin_once(self, timeout_sec=0.1)
         
         return self.save_path
     
     def save_path_callback(self, msg):
         """Callback when save path is received"""
-        self.save_path = msg.data
-        self.done = True
-        self.get_logger().info(f'Received save path: {self.save_path}')
+        if self.save_path != msg.data:
+            self.save_path = msg.data
+            self.get_logger().info(f'Received save path: {self.save_path}')
     
     def reset_environment(self):
         """Reset the environment via service call"""
@@ -106,15 +129,11 @@ class AutoRecorderLauncher(Node):
         """Wait for the save path to change from old_save_path"""
         self.get_logger().info(f'Waiting for save path to change from: {old_save_path}')
         
-        # Reset the done flag
-        self.done = False
-        self.save_path = old_save_path
-        
         # Spin until we get a different save path
         start_time = time.time()
         timeout = 30.0  # 30 second timeout
         
-        while rclpy.ok() and (not self.done or self.save_path == old_save_path):
+        while rclpy.ok() and (self.save_path == old_save_path or self.save_path is None):
             rclpy.spin_once(self, timeout_sec=0.1)
             if time.time() - start_time > timeout:
                 self.get_logger().error('Timeout waiting for new save path')
@@ -123,9 +142,99 @@ class AutoRecorderLauncher(Node):
         self.get_logger().info(f'New save path received: {self.save_path}')
         return self.save_path
     
-    def run_workflow(self):
-        """Run the complete workflow once"""
+    def compile_video(self, save_path, episode_num):
+        """Compile images into an mp4 video"""
+        images_dir = os.path.join(save_path, "scene_camera/rgb")
+        if not os.path.exists(images_dir):
+            self.get_logger().warn(f"Images directory not found: {images_dir}")
+            return
+
+        # Look for png or jpg
+        images = sorted(glob.glob(os.path.join(images_dir, "*.png")))
+        if not images:
+            images = sorted(glob.glob(os.path.join(images_dir, "*.jpg")))
+            
+        if not images:
+            self.get_logger().warn(f"No images found in {images_dir}")
+            return
+
+        output_path = os.path.join(save_path, "..", "video", f"task_{episode_num}.mp4")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        self.get_logger().info(f"Compiling video to {output_path}")
+
         try:
+            # Use cv2
+            first_image = cv2.imread(images[0])
+            if first_image is None:
+                self.get_logger().error(f"Failed to read first image: {images[0]}")
+                return
+                
+            height, width, layers = first_image.shape
+            size = (width, height)
+            
+            # Try mp4v codec
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(output_path, fourcc, 30, size)
+
+            for filename in images:
+                img = cv2.imread(filename)
+                if img is not None:
+                    out.write(img)
+            
+            out.release()
+            self.get_logger().info("Video compilation complete")
+        except Exception as e:
+            self.get_logger().error(f"Failed to compile video: {e}")
+
+    def aggregate_results(self, save_path, episode_num):
+        """Aggregate evaluation results"""
+        result_path = os.path.join(save_path, "eval_result.json")
+        if not os.path.exists(result_path):
+            self.get_logger().warn(f"Result file not found: {result_path}")
+            return
+
+        try:
+            with open(result_path, 'r') as f:
+                data = json.load(f)
+            
+            self.all_results[f"episode_{episode_num}"] = data
+            
+            # Save combined results in the parent directory
+            parent_dir = os.path.dirname(save_path)
+            combined_path = os.path.join(parent_dir, "combined_results.json")
+            
+            with open(combined_path, 'w') as f:
+                json.dump(self.all_results, f, indent=4)
+                
+            self.get_logger().info(f"Results aggregated to {combined_path}")
+            
+        except Exception as e:
+            self.get_logger().error(f"Failed to aggregate results: {e}")
+
+    def run_workflow(self):
+        """Run the complete workflow for num_episodes"""
+        for episode in range(self.num_episodes):
+            self.get_logger().info(f'Starting episode {episode + 1}/{self.num_episodes}')
+            
+            # Reset task completed flag
+            self.task_completed = False
+            
+            success = self.run_episode(episode + 1)
+            if not success:
+                self.get_logger().error(f'Episode {episode + 1} failed')
+            
+            # Small delay between episodes
+            time.sleep(2.0)
+            
+        self.get_logger().info('All episodes completed.')
+        return True
+
+    def run_episode(self, episode_num):
+        """Run a single episode"""
+        try:
+            # Reset task completed signal
+            self.task_completed_pub.publish(Bool(data=False))
+            
             # Step 1: Get the initial save path
             save_path = self.get_save_path_once()
             
@@ -145,14 +254,22 @@ class AutoRecorderLauncher(Node):
             # Step 5: Start recording
             self.start_recording()
             
-            # Step 6: Launch dataset republisher and eval_lerobot_ros2 in parallel
+            # Step 6: Launch dataset republisher, cube_swap_node, and eval_lerobot_ros2 in parallel
             self.launch_republisher_and_eval(save_path)
             
-            self.get_logger().info('Workflow completed successfully!')
+            # Step 7: Stop recording
+            self.stop_recording()
+            
+            # Step 8: Post-processing
+            self.compile_video(save_path, episode_num)
+            self.aggregate_results(save_path, episode_num)
+            
+            self.get_logger().info('Episode completed successfully!')
             return True
             
         except Exception as e:
-            self.get_logger().error(f'Error in auto recorder launcher: {e}')
+            self.get_logger().error(f'Error in episode: {e}')
+            self.stop_recording()
             return False
     
     def delete_folder(self, folder_path):
@@ -287,8 +404,8 @@ class AutoRecorderLauncher(Node):
             raise
     
     def launch_republisher_and_eval(self, dataset_path):
-        """Launch both the dataset republisher and eval_lerobot_ros2 in parallel"""
-        self.get_logger().info(f'Launching dataset republisher and eval_lerobot_ros2 with path: {dataset_path}')
+        """Launch dataset republisher, cube_swap_node, and eval_lerobot_ros2 in parallel"""
+        self.get_logger().info(f'Launching dataset republisher, cube_swap_node, and eval_lerobot_ros2 with path: {dataset_path}')
         
         try:
             # Build the launch command for dataset republisher
@@ -303,7 +420,7 @@ class AutoRecorderLauncher(Node):
                 f'export PYTHONPATH="" && '
                 f'conda activate lerobot && '
                 f'source {ros_ws_path} && '
-                f'ros2 launch so_100_track dataset_republisher.launch.py dataset_path:={dataset_path}'
+                f'exec ros2 launch so_100_track dataset_republisher.launch.py dataset_path:={dataset_path}'
             )
             
             self.get_logger().info(f'Running republisher command: {republisher_cmd}')
@@ -319,6 +436,26 @@ class AutoRecorderLauncher(Node):
             
             # Wait a moment for republisher to start
             time.sleep(2)
+
+            # Launch cube_swap_node
+            cube_swap_cmd = (
+                f'source ~/bin/miniforge/etc/profile.d/conda.sh && '
+                f'conda deactivate && '
+                f'export PYTHONPATH="" && '
+                f'conda activate lerobot && '
+                f'source {ros_ws_path} && '
+                f'exec ros2 run so_100_track object_pick_place --ros-args -p evaluate:=true'
+            )
+            
+            self.get_logger().info(f'Running object_pick_place command: {cube_swap_cmd}')
+            
+            cube_swap_process = subprocess.Popen(
+                cube_swap_cmd,
+                shell=True,
+                executable='/bin/zsh',
+                text=True
+            )
+            self.running_processes.append(('cube_swap_node', cube_swap_process))
             
             # Build the command for policy evaluation
             if self.policy_type == 'groot':
@@ -327,7 +464,7 @@ class AutoRecorderLauncher(Node):
                 eval_script_path = os.path.join(script_dir, 'eval_lerobot_ros2.py')
                 
                 # You may need to adjust these parameters based on your setup
-                eval_cmd = f'python3 {eval_script_path} --wait_for_convergence {self.wait_for_convergence} --control_frequency {self.control_frequency}'
+                eval_cmd = f'exec python3 {eval_script_path} --wait_for_convergence {self.wait_for_convergence} --control_frequency {self.control_frequency}'
             
             elif self.policy_type == 'lerobot':
                 lerobot_script_path = "/home/baxter/Documents/lerobot/src/lerobot/scripts/lerobot_ros2_control.py"
@@ -339,7 +476,7 @@ class AutoRecorderLauncher(Node):
                     f'export PYTHONPATH="" && '
                     f'conda activate lerobot && '
                     f'source {ros_ws_path} && '
-                    f'python {lerobot_script_path} --display_data=true'
+                    f'exec python {lerobot_script_path} --display_data=true'
                 )
                 
                 if self.policy_path:
@@ -363,18 +500,31 @@ class AutoRecorderLauncher(Node):
             )
             self.running_processes.append(('eval_lerobot_ros2', eval_process))
             
-            # Wait for both processes to complete
-            self.get_logger().info('Both processes launched. Waiting for completion...')
+            # Wait for both processes to complete OR task_completed signal
+            self.get_logger().info('Both processes launched. Waiting for completion or task signal...')
             
-            for name, process in self.running_processes:
-                try:
-                    returncode = process.wait()
-                    self.get_logger().info(f'{name} exited with code: {returncode}')
-                    if returncode != 0:
-                        self.get_logger().warn(f'{name} exited with non-zero code: {returncode}')
-                except KeyboardInterrupt:
-                    self.get_logger().info('Process wait interrupted')
-                    raise
+            while True:
+                # Check if task is completed
+                if self.task_completed:
+                    self.get_logger().info('Task completed signal detected. Stopping processes...')
+                    break
+                
+                # Check if processes are still running
+                all_finished = True
+                for name, process in self.running_processes:
+                    if process.poll() is None:
+                        all_finished = False
+                        break
+                
+                if all_finished:
+                    self.get_logger().info('All processes finished naturally.')
+                    break
+                
+                # Spin ROS to process callbacks (like task_completed)
+                rclpy.spin_once(self, timeout_sec=0.1)
+            
+            # Ensure processes are cleaned up
+            self.cleanup_processes()
             
         except KeyboardInterrupt:
             self.get_logger().info('Launch interrupted by user')
@@ -389,17 +539,28 @@ class AutoRecorderLauncher(Node):
         """Terminate all running subprocesses"""
         for name, process in self.running_processes:
             if process.poll() is None:
-                self.get_logger().info(f'Terminating {name}...')
-                process.terminate()
+                self.get_logger().info(f'Stopping {name} (PID: {process.pid})...')
+                
+                # Try SIGINT first (Ctrl+C equivalent) - ROS nodes like this
+                process.send_signal(signal.SIGINT)
                 try:
-                    process.wait(timeout=5)
+                    process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
-                    self.get_logger().warn(f'Force killing {name}...')
-                    process.kill()
-                    try:
-                        process.wait(timeout=1)
-                    except:
-                        pass
+                    # Try SIGTERM
+                    if process.poll() is None:
+                        self.get_logger().warn(f'SIGINT timed out for {name}, sending SIGTERM...')
+                        process.terminate()
+                        try:
+                            process.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            # Force kill with SIGKILL
+                            if process.poll() is None:
+                                self.get_logger().warn(f'SIGTERM timed out for {name}, force killing (SIGKILL)...')
+                                process.kill()
+                                try:
+                                    process.wait(timeout=1)
+                                except:
+                                    pass
         self.running_processes.clear()
 
 
@@ -412,6 +573,7 @@ def main(args=None):
     parser.add_argument('--root', type=str, default=None, help='Root directory for dataset (for lerobot)')
     parser.add_argument('--wait_for_convergence', type=str, default='True', help='Wait for convergence (for groot)')
     parser.add_argument('--control_frequency', type=float, default=3.0, help='Control frequency (for groot)')
+    parser.add_argument('--num_episodes', type=int, default=1, help='Number of episodes to run')
     
     parsed_args, remaining_args = parser.parse_known_args(args=args)
     
@@ -422,7 +584,8 @@ def main(args=None):
         policy_path=parsed_args.policy_path,
         wait_for_convergence=parsed_args.wait_for_convergence,
         control_frequency=parsed_args.control_frequency,
-        root=parsed_args.root
+        root=parsed_args.root,
+        num_episodes=parsed_args.num_episodes
     )
     shutdown_requested = {'value': False}
     
@@ -435,6 +598,8 @@ def main(args=None):
         node.get_logger().info('Ctrl+C detected - cleaning up...')
         node.cleanup_processes()
         node.stop_recording()
+        # Raise KeyboardInterrupt to ensure the main loop exits
+        raise KeyboardInterrupt
     
     signal.signal(signal.SIGINT, signal_handler)
     
