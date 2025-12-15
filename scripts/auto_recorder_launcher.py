@@ -62,6 +62,9 @@ class AutoRecorderLauncher(Node):
             self.save_path_callback,
             10
         )
+        
+        # Initial cleanup for safety
+        self.force_kill_lingering_nodes()
     
     def task_completed_callback(self, msg):
         """Callback when task is completed"""
@@ -174,7 +177,7 @@ class AutoRecorderLauncher(Node):
             
             # Try mp4v codec
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(output_path, fourcc, 30, size)
+            out = cv2.VideoWriter(output_path, fourcc, 15, size)
 
             for filename in images:
                 img = cv2.imread(filename)
@@ -223,8 +226,8 @@ class AutoRecorderLauncher(Node):
             if not success:
                 self.get_logger().error(f'Episode {episode + 1} failed')
             
-            # Small delay between episodes
-            time.sleep(2.0)
+            # Delay between episodes to ensure cleanup
+            time.sleep(15.0)
             
         self.get_logger().info('All episodes completed.')
         return True
@@ -420,7 +423,7 @@ class AutoRecorderLauncher(Node):
                 f'export PYTHONPATH="" && '
                 f'conda activate lerobot && '
                 f'source {ros_ws_path} && '
-                f'exec ros2 launch so_100_track dataset_republisher.launch.py dataset_path:={dataset_path}'
+                f'ros2 launch so_100_track dataset_republisher.launch.py dataset_path:={dataset_path}'
             )
             
             self.get_logger().info(f'Running republisher command: {republisher_cmd}')
@@ -444,7 +447,7 @@ class AutoRecorderLauncher(Node):
                 f'export PYTHONPATH="" && '
                 f'conda activate lerobot && '
                 f'source {ros_ws_path} && '
-                f'exec ros2 run so_100_track object_pick_place --ros-args -p evaluate:=true'
+                f'ros2 run so_100_track object_pick_place --ros-args -p evaluate:=true'
             )
             
             self.get_logger().info(f'Running object_pick_place command: {cube_swap_cmd}')
@@ -464,7 +467,7 @@ class AutoRecorderLauncher(Node):
                 eval_script_path = os.path.join(script_dir, 'eval_lerobot_ros2.py')
                 
                 # You may need to adjust these parameters based on your setup
-                eval_cmd = f'exec python3 {eval_script_path} --wait_for_convergence {self.wait_for_convergence} --control_frequency {self.control_frequency}'
+                eval_cmd = f'python3 {eval_script_path} --wait_for_convergence {self.wait_for_convergence} --control_frequency {self.control_frequency}'
             
             elif self.policy_type == 'lerobot':
                 lerobot_script_path = "/home/baxter/Documents/lerobot/src/lerobot/scripts/lerobot_ros2_control.py"
@@ -476,7 +479,7 @@ class AutoRecorderLauncher(Node):
                     f'export PYTHONPATH="" && '
                     f'conda activate lerobot && '
                     f'source {ros_ws_path} && '
-                    f'exec python {lerobot_script_path} --display_data=true'
+                    f'python {lerobot_script_path} --display_data=true'
                 )
                 
                 if self.policy_path:
@@ -537,6 +540,7 @@ class AutoRecorderLauncher(Node):
     
     def cleanup_processes(self):
         """Terminate all running subprocesses"""
+        # First try to kill the subprocesses we spawned
         for name, process in self.running_processes:
             if process.poll() is None:
                 self.get_logger().info(f'Stopping {name} (PID: {process.pid})...')
@@ -562,6 +566,27 @@ class AutoRecorderLauncher(Node):
                                 except:
                                     pass
         self.running_processes.clear()
+        
+        # Aggressive cleanup of any lingering ROS nodes by name
+        self.force_kill_lingering_nodes()
+
+    def force_kill_lingering_nodes(self):
+        """Force kill known ROS nodes using pkill -9"""
+        nodes_to_kill = [
+            "object_pick_place",
+            "dataset_republisher",
+            "lerobot_ros2_control",
+            "eval_lerobot_ros2",
+            "cube_swap_node"
+        ]
+        
+        self.get_logger().info("Performing aggressive cleanup of lingering nodes...")
+        for node_name in nodes_to_kill:
+            try:
+                # pkill -9 -f matches the command line pattern
+                subprocess.run(f"pkill -9 -f {node_name}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
 
 
 def main(args=None):
