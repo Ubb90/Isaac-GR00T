@@ -51,6 +51,7 @@ from typing import Dict, List, Optional
 import draccus
 import numpy as np
 import rclpy
+import rclpy.logging
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image, JointState
@@ -262,6 +263,7 @@ class Gr00tROS2Node(Node):
 
     def __init__(self, config):
         super().__init__('gr00t_policy_node')
+        self.get_logger().set_level(rclpy.logging.LoggingSeverity.ERROR)
         
         self.config = config
         
@@ -665,7 +667,7 @@ class ROS2EvalConfig:
     
     # Task configuration
     # lang_instruction: str = "Swap the 2 cubes position using a third location"
-    lang_instruction: str = "pick up the cube and move it to the red area"
+    lang_instruction: str = "pick up the cube and move it to the center of the red area"
     action_horizon: Optional[int] = None  
     """Action horizon (number of actions predicted per policy query). 
     If None, will be automatically detected from the policy server's response.

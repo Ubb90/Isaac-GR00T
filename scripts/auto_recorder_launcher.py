@@ -10,6 +10,7 @@ Usage:
 """
 
 import rclpy
+import rclpy.logging
 from rclpy.node import Node
 from std_msgs.msg import String, Bool
 from std_srvs.srv import SetBool, Trigger
@@ -27,8 +28,9 @@ import cv2
 
 
 class AutoRecorderLauncher(Node):
-    def __init__(self, policy_type='groot', policy_path=None, wait_for_convergence='True', control_frequency=3.0, root=None, num_episodes=1):
+    def __init__(self, policy_type='groot', policy_path=None, wait_for_convergence='True', control_frequency=3.0, root=None, num_episodes=1, episode_timeout=300.0, real=False):
         super().__init__('auto_recorder_launcher')
+        self.get_logger().set_level(rclpy.logging.LoggingSeverity.ERROR)
         
         self.policy_type = policy_type
         self.policy_path = policy_path
@@ -36,7 +38,9 @@ class AutoRecorderLauncher(Node):
         self.control_frequency = control_frequency
         self.root = root
         self.num_episodes = num_episodes
-        self.get_logger().info(f'Auto Recorder Launcher - (Policy: {self.policy_type}, Episodes: {self.num_episodes})')
+        self.episode_timeout = episode_timeout
+        self.real = real
+        self.get_logger().info(f'Auto Recorder Launcher - (Policy: {self.policy_type}, Episodes: {self.num_episodes}, Timeout: {self.episode_timeout}s, Real: {self.real})')
         self.save_path = None
         self.done = False
         self.recording_started = False  # Track if recording was started
@@ -144,7 +148,23 @@ class AutoRecorderLauncher(Node):
         
         self.get_logger().info(f'New save path received: {self.save_path}')
         return self.save_path
-    
+
+    def analyze_trajectory(self, save_path):
+        """Run trajectory analysis script"""
+        script_path = "/home/baxter/Documents/LeTrack/utils/analyze_ee_trajectory.py"
+        if not os.path.exists(script_path):
+            self.get_logger().warn(f"Analysis script not found: {script_path}")
+            return
+
+        self.get_logger().info(f"Running trajectory visualization for {save_path}")
+        try:
+            # Run the visualization script with the save path as argument
+            cmd = f"python3 {script_path} {save_path}"
+            subprocess.run(cmd, shell=True, check=True)
+            self.get_logger().info("Trajectory visualization completed")
+        except Exception as e:
+            self.get_logger().error(f"Failed to run trajectory visualization: {e}")
+
     def compile_video(self, save_path, episode_num):
         """Compile images into an mp4 video"""
         images_dir = os.path.join(save_path, "scene_camera/rgb")
@@ -191,15 +211,33 @@ class AutoRecorderLauncher(Node):
 
     def aggregate_results(self, save_path, episode_num):
         """Aggregate evaluation results"""
+        data = {}
+        
+        # Load eval_result.json
         result_path = os.path.join(save_path, "eval_result.json")
-        if not os.path.exists(result_path):
+        if os.path.exists(result_path):
+            try:
+                with open(result_path, 'r') as f:
+                    data.update(json.load(f))
+            except Exception as e:
+                self.get_logger().error(f"Failed to load eval_result.json: {e}")
+        else:
             self.get_logger().warn(f"Result file not found: {result_path}")
+
+        # Load analysis_results.json
+        analysis_path = os.path.join(save_path, "analysis_results.json")
+        if os.path.exists(analysis_path):
+            try:
+                with open(analysis_path, 'r') as f:
+                    analysis_data = json.load(f)
+                    data["analysis"] = analysis_data
+            except Exception as e:
+                self.get_logger().error(f"Failed to load analysis_results.json: {e}")
+
+        if not data:
             return
 
         try:
-            with open(result_path, 'r') as f:
-                data = json.load(f)
-            
             self.all_results[f"episode_{episode_num}"] = data
             
             # Save combined results in the parent directory
@@ -230,6 +268,20 @@ class AutoRecorderLauncher(Node):
             time.sleep(15.0)
             
         self.get_logger().info('All episodes completed.')
+        
+        # Post-workflow actions
+        if self.save_path:
+            # Delete the final save path
+            if not self.real:
+                self.delete_folder(self.save_path)
+            
+            # Run video grid script on the parent directory
+            parent_dir = os.path.dirname(self.save_path)
+            self.run_video_grid_script(parent_dir)
+            
+        # Shutdown environment
+        self.shutdown_environment()
+        
         return True
 
     def run_episode(self, episode_num):
@@ -246,24 +298,33 @@ class AutoRecorderLauncher(Node):
                 return False
             
             # Step 2: Delete the folder if it exists
-            self.delete_folder(save_path)
+            if not self.real:
+                self.delete_folder(save_path)
             
             # Step 3: Reset the environment
-            self.reset_environment()
+            if not self.real:
+                self.reset_environment()
             
             # Step 4: Wait for new save path (different from the old one)
-            save_path = self.wait_for_new_save_path(save_path)
+            if not self.real:
+                save_path = self.wait_for_new_save_path(save_path)
             
             # Step 5: Start recording
-            self.start_recording()
+            if not self.real:
+                self.start_recording()
+            
+            # Reset task_completed flag to ensure we don't trigger on stale signals
+            self.task_completed = False
             
             # Step 6: Launch dataset republisher, cube_swap_node, and eval_lerobot_ros2 in parallel
             self.launch_republisher_and_eval(save_path)
             
             # Step 7: Stop recording
-            self.stop_recording()
+            if not self.real:
+                self.stop_recording()
             
             # Step 8: Post-processing
+            self.analyze_trajectory(save_path)
             self.compile_video(save_path, episode_num)
             self.aggregate_results(save_path, episode_num)
             
@@ -276,17 +337,19 @@ class AutoRecorderLauncher(Node):
             return False
     
     def delete_folder(self, folder_path):
-        """Delete the folder if it exists"""
-        if os.path.exists(folder_path):
-            self.get_logger().info(f'Deleting folder: {folder_path}')
-            try:
-                shutil.rmtree(folder_path)
-                self.get_logger().info(f'Successfully deleted: {folder_path}')
-            except Exception as e:
-                self.get_logger().error(f'Failed to delete folder: {e}')
-                raise
-        else:
-            self.get_logger().info(f'Folder does not exist (will be created by recorder): {folder_path}')
+        """Delete scene and wrist camera folders if they exist"""
+        for subfolder in ["scene_camera", "wrist_camera"]:
+            target_path = os.path.join(folder_path, subfolder)
+            if os.path.exists(target_path):
+                self.get_logger().info(f'Deleting folder: {target_path}')
+                try:
+                    shutil.rmtree(target_path)
+                    self.get_logger().info(f'Successfully deleted: {target_path}')
+                except Exception as e:
+                    self.get_logger().error(f'Failed to delete folder: {e}')
+                    raise
+            else:
+                self.get_logger().info(f'Folder does not exist: {target_path}')
     
     def stop_recording(self):
         """Stop recording via service call"""
@@ -408,59 +471,43 @@ class AutoRecorderLauncher(Node):
     
     def launch_republisher_and_eval(self, dataset_path):
         """Launch dataset republisher, cube_swap_node, and eval_lerobot_ros2 in parallel"""
-        self.get_logger().info(f'Launching dataset republisher, cube_swap_node, and eval_lerobot_ros2 with path: {dataset_path}')
+        self.get_logger().info(f'Launching processes (Real: {self.real})...')
         
         try:
-            # Build the launch command for dataset republisher
+            if not self.real:
+                # Build the launch command for dataset republisher
+                # Need to properly source the ROS2 workspace with the correct conda environment
+                ros_ws_path = os.path.expanduser('/home/baxter/Documents/LeTrack/ros_ws/install/local_setup.zsh')
+                
+                # The republisher needs to run in the lerobot conda environment, not gr00t
+                # We need to deactivate current env and activate lerobot
+                republisher_cmd = (
+                    f'source ~/bin/miniforge/etc/profile.d/conda.sh && '
+                    f'conda deactivate && '
+                    f'export PYTHONPATH="" && '
+                    f'conda activate lerobot && '
+                    f'source {ros_ws_path} && '
+                    f'ros2 launch so_100_track dataset_republisher.launch.py dataset_path:={dataset_path}'
+                )
+                
+                self.get_logger().info(f'Running republisher command: {republisher_cmd}')
+                
+                # Launch republisher process (non-blocking)
+                republisher_process = subprocess.Popen(
+                    republisher_cmd,
+                    shell=True,
+                    executable='/bin/zsh',
+                    text=True
+                )
+                self.running_processes.append(('republisher', republisher_process))
+                
+                # Wait a moment for republisher to start
+                time.sleep(2)
+            
+            # Build the command for policy evaluation
             # Need to properly source the ROS2 workspace with the correct conda environment
             ros_ws_path = os.path.expanduser('/home/baxter/Documents/LeTrack/ros_ws/install/local_setup.zsh')
             
-            # The republisher needs to run in the lerobot conda environment, not gr00t
-            # We need to deactivate current env and activate lerobot
-            republisher_cmd = (
-                f'source ~/bin/miniforge/etc/profile.d/conda.sh && '
-                f'conda deactivate && '
-                f'export PYTHONPATH="" && '
-                f'conda activate lerobot && '
-                f'source {ros_ws_path} && '
-                f'ros2 launch so_100_track dataset_republisher.launch.py dataset_path:={dataset_path}'
-            )
-            
-            self.get_logger().info(f'Running republisher command: {republisher_cmd}')
-            
-            # Launch republisher process (non-blocking)
-            republisher_process = subprocess.Popen(
-                republisher_cmd,
-                shell=True,
-                executable='/bin/zsh',
-                text=True
-            )
-            self.running_processes.append(('republisher', republisher_process))
-            
-            # Wait a moment for republisher to start
-            time.sleep(2)
-
-            # Launch cube_swap_node
-            cube_swap_cmd = (
-                f'source ~/bin/miniforge/etc/profile.d/conda.sh && '
-                f'conda deactivate && '
-                f'export PYTHONPATH="" && '
-                f'conda activate lerobot && '
-                f'source {ros_ws_path} && '
-                f'ros2 run so_100_track object_pick_place --ros-args -p evaluate:=true'
-            )
-            
-            self.get_logger().info(f'Running object_pick_place command: {cube_swap_cmd}')
-            
-            cube_swap_process = subprocess.Popen(
-                cube_swap_cmd,
-                shell=True,
-                executable='/bin/zsh',
-                text=True
-            )
-            self.running_processes.append(('cube_swap_node', cube_swap_process))
-            
-            # Build the command for policy evaluation
             if self.policy_type == 'groot':
                 # Get the directory where this script is located
                 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -506,7 +553,14 @@ class AutoRecorderLauncher(Node):
             # Wait for both processes to complete OR task_completed signal
             self.get_logger().info('Both processes launched. Waiting for completion or task signal...')
             
+            start_time = time.time()
+
             while True:
+                # Check for timeout
+                if time.time() - start_time > self.episode_timeout:
+                    self.get_logger().error(f'Episode timed out after {self.episode_timeout} seconds!')
+                    break
+
                 # Check if task is completed
                 if self.task_completed:
                     self.get_logger().info('Task completed signal detected. Stopping processes...')
@@ -588,6 +642,53 @@ class AutoRecorderLauncher(Node):
             except Exception:
                 pass
 
+    def run_video_grid_script(self, root_path):
+        """Run the video grid creation script"""
+        script_path = "/home/baxter/Documents/LeTrack/utils/create_video_grid.py"
+        if not os.path.exists(script_path):
+            self.get_logger().warn(f"Video grid script not found: {script_path}")
+            return
+
+        self.get_logger().info(f"Running video grid script for {root_path}")
+        try:
+            # Run the script with the root path as argument
+            cmd = f"python3 {script_path} {root_path}"
+            subprocess.run(cmd, shell=True, check=True)
+            self.get_logger().info("Video grid creation completed")
+        except Exception as e:
+            self.get_logger().error(f"Failed to run video grid script: {e}")
+
+    def shutdown_environment(self):
+        """Shutdown the environment via service call"""
+        self.get_logger().info('Shutting down environment...')
+        
+        try:
+            client = self.create_client(Trigger, '/environment/shutdown')
+            
+            if not client.wait_for_service(timeout_sec=2.0):
+                self.get_logger().warn('Shutdown service not available')
+                return
+            
+            request = Trigger.Request()
+            future = client.call_async(request)
+            
+            # Wait briefly for response, but don't block long as it might die
+            start_time = time.time()
+            while not future.done():
+                rclpy.spin_once(self, timeout_sec=0.1)
+                if time.time() - start_time > 3.0:
+                    self.get_logger().info('Shutdown request sent (timed out waiting for response)')
+                    return
+            
+            response = future.result()
+            if response.success:
+                self.get_logger().info(f'Environment shutdown: {response.message}')
+            else:
+                self.get_logger().error(f'Failed to shutdown environment: {response.message}')
+                
+        except Exception as e:
+            self.get_logger().error(f'Error shutting down environment: {e}')
+
 
 def main(args=None):
     import argparse
@@ -599,6 +700,8 @@ def main(args=None):
     parser.add_argument('--wait_for_convergence', type=str, default='True', help='Wait for convergence (for groot)')
     parser.add_argument('--control_frequency', type=float, default=3.0, help='Control frequency (for groot)')
     parser.add_argument('--num_episodes', type=int, default=1, help='Number of episodes to run')
+    parser.add_argument('--episode_timeout', type=float, default=300.0, help='Episode timeout in seconds')
+    parser.add_argument('--real', action='store_true', help='Run in real world mode (no recording, no republisher)')
     
     parsed_args, remaining_args = parser.parse_known_args(args=args)
     
@@ -610,7 +713,9 @@ def main(args=None):
         wait_for_convergence=parsed_args.wait_for_convergence,
         control_frequency=parsed_args.control_frequency,
         root=parsed_args.root,
-        num_episodes=parsed_args.num_episodes
+        num_episodes=parsed_args.num_episodes,
+        episode_timeout=parsed_args.episode_timeout,
+        real=parsed_args.real
     )
     shutdown_requested = {'value': False}
     
