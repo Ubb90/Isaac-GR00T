@@ -20,30 +20,26 @@ SAVE_DIR_ROOT = "/media/baxter/T7RawData/tmp1"
 # List of configurations to run
 # Format: (checkpoint_path, data_config)
 CONFIGS = [
-    # (
-    #     "/media/baxter/T7ModelOut/groot/so101track_cube_static_long/checkpoint-2500/",
-    #     "so100_track_long",
-    # ),
-    # (
-    #     "/media/baxter/T7ModelOut/groot/so101track_cube_static_long/checkpoint-5000/",
-    #     "so100_track_long",
-    # ),
-    # (
-    #     "/media/baxter/T7ModelOut/groot/so101track_cube_static_reduced_5/checkpoint-2500/",
-    #     "so100_track",
-    # ),
-    # (
-    #     "/media/baxter/T7ModelOut/groot/so101track_cube_static_reduced_5/checkpoint-5000/",
-    #     "so100_track",
-    # ),
-    (
-        "/media/baxter/T7ModelOut/groot/so101track_cube_static_medium/checkpoint-5000/",
-        "so100_track_medium",
-    ),
-    
-    
-    # Add more configurations here
+    # so101track_cube_moving_50 - Checkpoint 500
+    ("/media/baxter/storage/models/groot/so101track_cube_moving_error/checkpoint-500", "so100_track"),
 ]
+
+def infer_data_config(checkpoint_path):
+    path = Path(checkpoint_path)
+    # Handle trailing slash
+    if path.name == "":
+        path = path.parent
+    
+    run_name = path.parent.name
+    
+    if "very_long" in run_name:
+        return "so100_track_very_long"
+    elif "medium" in run_name:
+        return "so100_track_medium"
+    elif "long" in run_name:
+        return "so100_track_long"
+    else:
+        return "so100_track"
 
 def get_output_name(checkpoint_path, data_config):
     """Derives output name from checkpoint path and data config.
@@ -63,13 +59,7 @@ def get_output_name(checkpoint_path, data_config):
     if match:
         base_name = f"{run_name}_{match.group(1)}"
     else:
-        base_name = f"{run_name}_{ckpt_name}"
-        
-    if "medium" in data_config:
-        return f"{base_name}_medium"
-    elif "long" in data_config:
-        return f"{base_name}_long"
-        
+        base_name = f"{run_name}_{ckpt_name}"        
     return base_name
 
 class ProcessRunner:
@@ -170,17 +160,18 @@ def run_single_config(ckpt_path, data_config, num_episodes):
 
         # 2. Start Isaac Sim
         # Note: Using hardcoded urdf/rmp paths from prompt, but could be dynamic if needed
+        static_flag = "--static " if "static" in ckpt_path else ""
         isaac_cmd = (
             f"{ISAAC_SCRIPT} "
             f"--urdf '/home/baxter/Documents/LeTrack/ros_ws/src/so_100_track/urdf/so_100_arm_wheel.urdf' "
             f"--rmp '/home/baxter/Documents/LeTrack/ros_ws/src/so_100_track/config' "
-            f"-r 'so101track_cube' "
+            f"-r 'so101track_cube_swap' "
             f"--fps 3 "
             f"--save-dir '{SAVE_DIR_ROOT}' "
             f"--/renderer/activeGpu=0 "
             f"--target-size='640x480' "
             f"--disable-depth "
-            f"--static "
+            f"{static_flag}"
             f"--evaluate"
         )
         
@@ -227,7 +218,7 @@ def run_single_config(ckpt_path, data_config, num_episodes):
 
     # 4. Rename folder
     output_name = get_output_name(ckpt_path, data_config)
-    src_path = os.path.join(SAVE_DIR_ROOT, "so101track_cube")
+    src_path = os.path.join(SAVE_DIR_ROOT, "so101track_cube_swap")
     dst_path = os.path.join(SAVE_DIR_ROOT, output_name)
     
     if os.path.exists(src_path):
@@ -241,12 +232,31 @@ def run_single_config(ckpt_path, data_config, num_episodes):
 
 def main():
     parser = argparse.ArgumentParser(description="Run full recording pipeline")
-    parser.add_argument("--num_episodes", type=int, default=10, help="Number of episodes to run per config")
+    parser.add_argument("--num_episodes", type=int, default=20, help="Number of episodes to run per config")
+    parser.add_argument("--config-list", type=str, help="Path to file containing list of checkpoints to run")
     args = parser.parse_args()
 
-    for ckpt, data_conf in CONFIGS:
+    configs_to_run = []
+    if args.config_list:
+        if not os.path.exists(args.config_list):
+            print(f"Error: Config list file {args.config_list} not found.")
+            return
+            
+        print(f"Loading configurations from {args.config_list}...")
+        with open(args.config_list, 'r') as f:
+            for line in f:
+                ckpt_path = line.strip()
+                if ckpt_path:
+                    data_conf = infer_data_config(ckpt_path)
+                    configs_to_run.append((ckpt_path, data_conf))
+        print(f"Loaded {len(configs_to_run)} configurations.")
+    else:
+        configs_to_run = CONFIGS
+
+    for ckpt, data_conf in configs_to_run:
         print(f"\n{'='*50}")
         print(f"Running config: {ckpt}")
+        print(f"Data config: {data_conf}")
         print(f"{'='*50}\n")
         run_single_config(ckpt, data_conf, args.num_episodes)
         time.sleep(5) # Cooldown between runs

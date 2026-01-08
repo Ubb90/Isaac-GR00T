@@ -301,6 +301,10 @@ class AutoRecorderLauncher(Node):
             if not self.real:
                 self.delete_folder(save_path)
             
+            # Ensure recording is stopped before resetting
+            if not self.real:
+                self.stop_recording()
+
             # Step 3: Reset the environment
             if not self.real:
                 self.reset_environment()
@@ -700,7 +704,7 @@ def main(args=None):
     parser.add_argument('--wait_for_convergence', type=str, default='True', help='Wait for convergence (for groot)')
     parser.add_argument('--control_frequency', type=float, default=3.0, help='Control frequency (for groot)')
     parser.add_argument('--num_episodes', type=int, default=1, help='Number of episodes to run')
-    parser.add_argument('--episode_timeout', type=float, default=300.0, help='Episode timeout in seconds')
+    parser.add_argument('--episode_timeout', type=float, default=180.0, help='Episode timeout in seconds')
     parser.add_argument('--real', action='store_true', help='Run in real world mode (no recording, no republisher)')
     
     parsed_args, remaining_args = parser.parse_known_args(args=args)

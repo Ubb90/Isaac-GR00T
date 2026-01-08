@@ -1,0 +1,206 @@
+FROM nvidia/cuda:12.6.3-devel-ubuntu24.04
+
+# =============================================================================
+# CHECKPOINT 0: Base Image Setup
+# =============================================================================
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PATH=/opt/conda/bin:$PATH
+ENV CONDA_PREFIX=/opt/conda
+
+WORKDIR /workspace
+
+# =============================================================================
+# CHECKPOINT 1: System Dependencies
+# =============================================================================
+RUN echo "CHECKPOINT 1: Installing system dependencies..." && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    wget \
+    curl \
+    git \
+    bzip2 \
+    ca-certificates \
+    libglib2.0-0 \
+    libxext6 \
+    libsm6 \
+    libxrender1 \
+    libgomp1 \
+    ffmpeg \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev \
+    zsh \
+    vim \
+    && rm -rf /var/lib/apt/lists/* && \
+    echo "CHECKPOINT 1: System dependencies installed successfully ✓"
+
+# =============================================================================
+# CHECKPOINT 2: Miniforge/Conda Installation
+# =============================================================================
+RUN echo "CHECKPOINT 2: Installing Miniforge..." && \
+    wget --quiet https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O /tmp/miniforge.sh && \
+    /bin/bash /tmp/miniforge.sh -b -p /opt/conda && \
+    rm /tmp/miniforge.sh && \
+    /opt/conda/bin/conda init bash && \
+    /opt/conda/bin/conda init zsh && \
+    /opt/conda/bin/conda config --set always_yes yes --set changeps1 no && \
+    /opt/conda/bin/conda update -q conda && \
+    echo "CHECKPOINT 2: Miniforge installed successfully ✓"
+
+# =============================================================================
+# CHECKPOINT 3: Copy Environment Files Only
+# =============================================================================
+WORKDIR /workspace/Isaac-GR00T
+COPY env.yaml env_isaacsim.yaml lerobot-env.yaml ./
+RUN echo "CHECKPOINT 3: Environment files copied ✓"
+
+# =============================================================================
+# CHECKPOINT 4: Create gr00t Conda Environment (without problematic packages)
+# =============================================================================
+# Remove packages that need special handling:
+# - flash-attn: needs torch installed first
+# - gr00t: installed from source in CHECKPOINT 5
+# - opencv-python pip packages: conflict with conda's py-opencv/libopencv (keep conda versions)
+RUN echo "CHECKPOINT 4: Creating gr00t conda environment..." && \
+    sed '/flash-attn/d; /gr00t==/d; /opencv-python/d' env.yaml > env-no-flash.yaml && \
+    /opt/conda/bin/conda env create -f env-no-flash.yaml && \
+    /opt/conda/bin/conda clean -afy && \
+    echo "CHECKPOINT 4: gr00t environment created successfully ✓"
+
+# Verify gr00t environment
+RUN echo "Verifying gr00t environment..." && \
+    /opt/conda/bin/conda run -n gr00t python --version && \
+    /opt/conda/bin/conda run -n gr00t pip list | head -20 && \
+    echo "gr00t environment verified ✓"
+
+# Install flash-attn separately after torch is available
+RUN echo "Installing flash-attn..." && \
+    /opt/conda/bin/conda run -n gr00t pip install --no-cache-dir flash-attn==2.7.1.post4 && \
+    echo "flash-attn installed successfully ✓"
+
+# =============================================================================
+# CHECKPOINT 5: Create env_isaacsim Conda Environment
+# =============================================================================
+RUN echo "CHECKPOINT 5: Creating env_isaacsim conda environment..." && \
+    /opt/conda/bin/conda env create -f env_isaacsim.yaml && \
+    /opt/conda/bin/conda clean -afy && \
+    echo "CHECKPOINT 5: env_isaacsim environment created successfully ✓"
+
+# Verify env_isaacsim environment
+RUN echo "Verifying env_isaacsim environment..." && \
+    /opt/conda/bin/conda run -n env_isaacsim python --version && \
+    /opt/conda/bin/conda run -n env_isaacsim pip list | head -20 && \
+    echo "env_isaacsim environment verified ✓"
+
+# =============================================================================
+# CHECKPOINT 6: Create lerobot Conda Environment
+# =============================================================================
+RUN echo "CHECKPOINT 6: Creating lerobot conda environment..." && \
+    sed '/flash-attn/d; /pyzed/d' lerobot-env.yaml > lerobot-env-no-flash.yaml && \
+    /opt/conda/bin/conda env create -f lerobot-env-no-flash.yaml && \
+    /opt/conda/bin/conda clean -afy && \
+    echo "CHECKPOINT 6: lerobot environment created successfully ✓"
+
+# Install flash-attn for lerobot environment
+RUN echo "Installing flash-attn for lerobot..." && \
+    /opt/conda/bin/conda run -n lerobot pip install --no-cache-dir flash-attn==2.8.3 && \
+    echo "flash-attn installed successfully for lerobot ✓"
+
+# =============================================================================
+# CHECKPOINT 7: Copy Full Project and Install gr00t Package
+# =============================================================================
+COPY . /workspace/Isaac-GR00T/
+RUN echo "CHECKPOINT 7: Full project copied ✓"
+
+# Install gr00t package in editable mode
+RUN echo "Installing gr00t package..." && \
+    /opt/conda/bin/conda run -n gr00t pip install -e . && \
+    echo "gr00t package installed successfully ✓"
+
+# Verify lerobot environment
+RUN echo "Verifying lerobot environment..." && \
+    /opt/conda/bin/conda run -n lerobot python --version && \
+    /opt/conda/bin/conda run -n lerobot pip list | head -20 && \
+    echo "lerobot environment verified ✓"
+
+# =============================================================================
+# CHECKPOINT 8: Environment Verification
+# =============================================================================
+RUN echo "CHECKPOINT 8: Verifying all environments..." && \
+    echo "=== Available Conda Environments ===" && \
+    /opt/conda/bin/conda env list && \
+    echo "" && \
+    echo "=== gr00t Python Version ===" && \
+    /opt/conda/bin/conda run -n gr00t python --version && \
+    echo "" && \
+    echo "=== env_isaacsim Python Version ===" && \
+    /opt/conda/bin/conda run -n env_isaacsim python --version && \
+    echo "" && \
+    echo "=== lerobot Python Version ===" && \
+    /opt/conda/bin/conda run -n lerobot python --version && \
+    echo "" && \
+    echo "CHECKPOINT 8: All environments verified successfully ✓"
+
+# =============================================================================
+# CHECKPOINT 9: Setup Runtime Configuration
+# =============================================================================
+# Create necessary directories
+RUN mkdir -p /workspace/LeTrack && \
+    mkdir -p /media/baxter/T7RawData/tmp1 && \
+    mkdir -p /media/baxter/storage/models/groot && \
+    echo "CHECKPOINT 9: Runtime directories created ✓"
+
+# Setup zsh profile for conda
+RUN echo 'export PATH=/opt/conda/bin:$PATH' >> /root/.zshrc && \
+    echo 'source /opt/conda/etc/profile.d/conda.sh' >> /root/.zshrc && \
+    echo "CHECKPOINT 9: Shell configuration complete ✓"
+
+# =============================================================================
+# Final Configuration
+# =============================================================================
+SHELL ["/bin/bash", "-c"]
+
+# Create entrypoint script
+RUN echo '#!/bin/bash' > /entrypoint.sh && \
+    echo 'source /opt/conda/etc/profile.d/conda.sh' >> /entrypoint.sh && \
+    echo 'exec "$@"' >> /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default command runs the full_recorder script
+# You can override this when running the container
+CMD ["/bin/bash", "-c", "source /opt/conda/etc/profile.d/conda.sh && conda activate gr00t && python scripts/full_recorder.py"]
+
+# =============================================================================
+# Build Instructions:
+# 
+# To build with checkpoint verification:
+#   docker build -f Dockerfile.full_recorder -t groot-recorder:latest .
+#
+# To run:
+#   docker run --gpus all \
+#     -v /path/to/LeTrack:/workspace/LeTrack \
+#     -v /path/to/data:/media/baxter/T7RawData \
+#     -v /path/to/models:/media/baxter/storage/models \
+#     groot-recorder:latest
+#
+# To run interactively:
+#   docker run --gpus all -it groot-recorder:latest /bin/bash
+#
+# Checkpoints:
+#   1. System dependencies
+#   2. Miniforge/Conda installation
+#   3. Environment files copied (ONLY yaml files)
+#   4. gr00t environment created
+#   5. env_isaacsim environment created
+#   6. lerobot environment created
+#   7. Full project copied & gr00t package installed
+#   8. All environments verified
+#   9. Runtime configuration
+#   9. Runtime configuration
+# =============================================================================
