@@ -11,7 +11,15 @@ import argparse
 from pathlib import Path
 
 # --- Configuration ---
-CONDA_SOURCE = "source ~/bin/miniforge/etc/profile.d/conda.sh"
+# Detect Conda location
+if os.path.exists("/opt/conda/etc/profile.d/conda.sh"):
+    CONDA_SOURCE = "source /opt/conda/etc/profile.d/conda.sh"
+    # Ensure subprocesses also know where conda is
+    os.environ['CONDA_SOURCE_PATH'] = "/opt/conda/etc/profile.d/conda.sh"
+else:
+    CONDA_SOURCE = "source ~/bin/miniforge/etc/profile.d/conda.sh"
+    os.environ['CONDA_SOURCE_PATH'] = os.path.expanduser("~/bin/miniforge/etc/profile.d/conda.sh")
+
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LETRACK_ROOT = os.path.expanduser("~/Documents/LeTrack")
 ISAAC_SCRIPT = os.path.join(LETRACK_ROOT, "isaacsim/isaac.sh")
@@ -21,7 +29,7 @@ SAVE_DIR_ROOT = "/media/baxter/T7RawData/tmp1"
 # Format: (checkpoint_path, data_config)
 CONFIGS = [
     # so101track_cube_moving_50 - Checkpoint 500
-    ("/media/baxter/storage/models/groot/so101track_cube_moving_error/checkpoint-500", "so100_track"),
+    ("/media/baxter/storage/models/groot/so101track_cube_swap_moving_1_long/checkpoint-2500", "so100_track"),
 ]
 
 def infer_data_config(checkpoint_path):
@@ -40,6 +48,19 @@ def infer_data_config(checkpoint_path):
         return "so100_track_long"
     else:
         return "so100_track"
+
+def infer_task_name(checkpoint_path):
+    path = Path(checkpoint_path)
+    # Handle trailing slash
+    if path.name == "":
+        path = path.parent
+    
+    run_name = path.parent.name
+    
+    if "swap" in run_name:
+        return "so101track_cube_swap"
+    else:
+        return "so101track_cube"
 
 def get_output_name(checkpoint_path, data_config):
     """Derives output name from checkpoint path and data config.
@@ -70,12 +91,33 @@ class ProcessRunner:
     def run_command(self, cmd, env_name, cwd=None, name="Process"):
         # Clear PYTHONPATH to prevent leakage from the calling environment
         # Force unbuffered output
-        full_cmd = f"{CONDA_SOURCE} && conda deactivate && export PYTHONPATH='' && export PYTHONUNBUFFERED=1 && conda activate {env_name} && {cmd}"
+        
+        # Determine correct conda source
+        if os.environ.get('CONDA_SOURCE_PATH'):
+             conda_src = f"source {os.environ.get('CONDA_SOURCE_PATH')}"
+        else:
+             conda_src = CONDA_SOURCE
+
+        # Inject specific environment variables and commands based on environment
+        pre_cmd = ""
+        if env_name == "env_isaacsim":
+             pre_cmd = (
+                 "export DISPLAY=:99 && "
+                 "(Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset &) && "
+                 "export __NV_PRIME_RENDER_OFFLOAD=1 && "
+                 "export __GLX_VENDOR_LIBRARY_NAME=nvidia && "
+                "export OMNI_CLIENT_USE_HUB=0 && "
+                "export OMNI_USE_HUB=0 && "
+                 "export OV_DISABLE_COMPUTE_CACHE=1 && "
+             )
+
+        full_cmd = f"{conda_src} && conda deactivate && export PYTHONPATH='' && export PYTHONUNBUFFERED=1 && conda activate {env_name} && {pre_cmd}{cmd}"
         print(f"[{name}] Starting: {full_cmd}")
         
         # Merge current env with unbuffered flag just in case
         env = os.environ.copy()
         env['PYTHONUNBUFFERED'] = '1'
+        env['OMNI_KIT_ACCEPT_EULA'] = 'YES'
         
         process = subprocess.Popen(
             full_cmd,
@@ -134,7 +176,7 @@ def monitor_output(process, name, ready_pattern, ready_event, wait_after_ready=0
             print(f"[{name}] READY SIGNAL RECEIVED")
             ready_event.set()
 
-def run_single_config(ckpt_path, data_config, num_episodes):
+def run_single_config(ckpt_path, data_config, num_episodes, task_name):
     embodiment_tag = "new_embodiment"
     runner = ProcessRunner()
     
@@ -165,14 +207,16 @@ def run_single_config(ckpt_path, data_config, num_episodes):
             f"{ISAAC_SCRIPT} "
             f"--urdf '/home/baxter/Documents/LeTrack/ros_ws/src/so_100_track/urdf/so_100_arm_wheel.urdf' "
             f"--rmp '/home/baxter/Documents/LeTrack/ros_ws/src/so_100_track/config' "
-            f"-r 'so101track_cube_swap' "
+            f"-r '{task_name}' "
             f"--fps 3 "
             f"--save-dir '{SAVE_DIR_ROOT}' "
-            f"--/renderer/activeGpu=0 "
             f"--target-size='640x480' "
             f"--disable-depth "
             f"{static_flag}"
-            f"--evaluate"
+            f"--evaluate "
+            "--/app/audio/enabled=false "
+            "--portable-root '/media/baxter/T7RawData/isaac_portable' "
+            "--vv"
         )
         
         isaac_ready = threading.Event()
@@ -218,7 +262,7 @@ def run_single_config(ckpt_path, data_config, num_episodes):
 
     # 4. Rename folder
     output_name = get_output_name(ckpt_path, data_config)
-    src_path = os.path.join(SAVE_DIR_ROOT, "so101track_cube_swap")
+    src_path = os.path.join(SAVE_DIR_ROOT, task_name)
     dst_path = os.path.join(SAVE_DIR_ROOT, output_name)
     
     if os.path.exists(src_path):
@@ -248,17 +292,21 @@ def main():
                 ckpt_path = line.strip()
                 if ckpt_path:
                     data_conf = infer_data_config(ckpt_path)
-                    configs_to_run.append((ckpt_path, data_conf))
+                    task_name = infer_task_name(ckpt_path)
+                    configs_to_run.append((ckpt_path, data_conf, task_name))
         print(f"Loaded {len(configs_to_run)} configurations.")
     else:
-        configs_to_run = CONFIGS
+        for ckpt, conf in CONFIGS:
+            task = infer_task_name(ckpt)
+            configs_to_run.append((ckpt, conf, task))
 
-    for ckpt, data_conf in configs_to_run:
+    for ckpt, data_conf, task_name in configs_to_run:
         print(f"\n{'='*50}")
         print(f"Running config: {ckpt}")
         print(f"Data config: {data_conf}")
+        print(f"Task name: {task_name}")
         print(f"{'='*50}\n")
-        run_single_config(ckpt, data_conf, args.num_episodes)
+        run_single_config(ckpt, data_conf, args.num_episodes, task_name)
         time.sleep(5) # Cooldown between runs
 
 if __name__ == "__main__":

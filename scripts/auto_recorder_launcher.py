@@ -477,6 +477,14 @@ class AutoRecorderLauncher(Node):
         """Launch dataset republisher, cube_swap_node, and eval_lerobot_ros2 in parallel"""
         self.get_logger().info(f'Launching processes (Real: {self.real})...')
         
+        # Determine Conda location
+        if os.path.exists("/opt/conda/etc/profile.d/conda.sh"):
+            conda_source_cmd = "source /opt/conda/etc/profile.d/conda.sh"
+        elif os.environ.get('CONDA_SOURCE_PATH'): # From full_recorder.py
+             conda_source_cmd = f"source {os.environ.get('CONDA_SOURCE_PATH')}"
+        else:
+            conda_source_cmd = "source ~/bin/miniforge/etc/profile.d/conda.sh"
+
         try:
             if not self.real:
                 # Build the launch command for dataset republisher
@@ -486,7 +494,7 @@ class AutoRecorderLauncher(Node):
                 # The republisher needs to run in the lerobot conda environment, not gr00t
                 # We need to deactivate current env and activate lerobot
                 republisher_cmd = (
-                    f'source ~/bin/miniforge/etc/profile.d/conda.sh && '
+                    f'{conda_source_cmd} && '
                     f'conda deactivate && '
                     f'export PYTHONPATH="" && '
                     f'conda activate lerobot && '
@@ -525,7 +533,7 @@ class AutoRecorderLauncher(Node):
                 
                 # Construct command with conda activation for lerobot
                 eval_cmd = (
-                    f'source ~/bin/miniforge/etc/profile.d/conda.sh && '
+                    f'{conda_source_cmd} && '
                     f'conda deactivate && '
                     f'export PYTHONPATH="" && '
                     f'conda activate lerobot && '
@@ -630,6 +638,10 @@ class AutoRecorderLauncher(Node):
 
     def force_kill_lingering_nodes(self):
         """Force kill known ROS nodes using pkill -9"""
+        if self.real:
+            # Skip aggressive cleanup on real robot
+            return
+
         nodes_to_kill = [
             "object_pick_place",
             "dataset_republisher",
@@ -648,12 +660,24 @@ class AutoRecorderLauncher(Node):
 
     def run_video_grid_script(self, root_path):
         """Run the video grid creation script"""
-        script_path = "/home/baxter/Documents/LeTrack/utils/create_video_grid.py"
-        if not os.path.exists(script_path):
-            self.get_logger().warn(f"Video grid script not found: {script_path}")
+        # Check standard locations
+        possible_paths = [
+            "/home/baxter/Documents/LeTrack/utils/create_video_grid.py",
+            "/root/Documents/LeTrack/utils/create_video_grid.py",
+            os.path.expanduser("~/Documents/LeTrack/utils/create_video_grid.py")
+        ]
+        
+        script_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                script_path = path
+                break
+        
+        if not script_path:
+            self.get_logger().warn(f"Video grid script not found in locations: {possible_paths}")
             return
 
-        self.get_logger().info(f"Running video grid script for {root_path}")
+        self.get_logger().info(f"Running video grid script at {script_path} for {root_path}")
         try:
             # Run the script with the root path as argument
             cmd = f"python3 {script_path} {root_path}"

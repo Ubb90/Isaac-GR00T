@@ -61,8 +61,20 @@ import cv2
 
 import sys
 import os
-sys.path.append("/home/baxter/Documents/Isaac-GR00T/gr00t/eval/")
-from service import ExternalRobotInferenceClient
+# Dynamically find the path to gr00t/eval
+current_dir = os.path.dirname(os.path.abspath(__file__))
+gr00t_eval_path = os.path.join(os.path.dirname(current_dir), "gr00t", "eval")
+if os.path.exists(gr00t_eval_path):
+    sys.path.append(gr00t_eval_path)
+else:
+    # Fallback to hardcoded path in container
+    sys.path.append("/workspace/Isaac-GR00T/gr00t/eval/")
+
+try:
+    from service import ExternalRobotInferenceClient
+except ImportError:
+    # If service is not found, maybe we are running from root
+    from gr00t.eval.service import ExternalRobotInferenceClient
 
 #################################################################################
 

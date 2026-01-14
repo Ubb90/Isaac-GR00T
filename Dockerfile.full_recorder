@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.6.3-devel-ubuntu24.04
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04
 
 # =============================================================================
 # CHECKPOINT 0: Base Image Setup
@@ -9,6 +9,9 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PATH=/opt/conda/bin:$PATH
 ENV CONDA_PREFIX=/opt/conda
+
+# Declare GITHUB_TOKEN as a build argument
+ARG GITHUB_TOKEN
 
 WORKDIR /workspace
 
@@ -35,6 +38,7 @@ RUN echo "CHECKPOINT 1: Installing system dependencies..." && \
     libswscale-dev \
     zsh \
     vim \
+    build-essential \
     && rm -rf /var/lib/apt/lists/* && \
     echo "CHECKPOINT 1: System dependencies installed successfully ✓"
 
@@ -52,25 +56,74 @@ RUN echo "CHECKPOINT 2: Installing Miniforge..." && \
     echo "CHECKPOINT 2: Miniforge installed successfully ✓"
 
 # =============================================================================
-# CHECKPOINT 3: Copy Environment Files Only
+# CHECKPOINT 3: Clone Repositories
 # =============================================================================
-WORKDIR /workspace/Isaac-GR00T
-COPY env.yaml env_isaacsim.yaml lerobot-env.yaml ./
-RUN echo "CHECKPOINT 3: Environment files copied ✓"
+WORKDIR /workspace
+RUN echo "CHECKPOINT 3: Cloning repositories..." && \
+    if [ -z "$GITHUB_TOKEN" ]; then echo "GITHUB_TOKEN build argument is required"; exit 1; fi && \
+    git clone https://${GITHUB_TOKEN}@github.com/Ubb90/Isaac-GR00T.git && \
+    git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:" && \
+    git clone --recursive https://${GITHUB_TOKEN}@github.com/Ubb90/LeTrack.git && \
+    echo "CHECKPOINT 3: Repositories cloned ✓"
 
 # =============================================================================
-# CHECKPOINT 4: Create gr00t Conda Environment (without problematic packages)
+# CHECKPOINT 4: Create lerobot Conda Environment (ROS 2 Humble + LeTrack)
+# =============================================================================
+# Replaces old lerobot env and integrates LeTrack setup
+WORKDIR /workspace/Isaac-GR00T
+RUN echo "CHECKPOINT 4: Creating lerobot conda environment..." && \
+    /opt/conda/bin/mamba create -n lerobot -y \
+    python=3.11 \
+    -c robostack-humble -c conda-forge -c robostack-staging \
+    ros-humble-desktop \
+    ros-humble-ros2-control \
+    ros-humble-ros2-controllers \
+    ros-humble-moveit \
+    ros-humble-xacro \
+    colcon-common-extensions \
+    yaml-cpp \
+    compilers \
+    cmake \
+    pkg-config \
+    make \
+    ninja \
+    colcon-common-extensions \
+    catkin_tools \
+    rosdep \
+    && /opt/conda/bin/mamba clean --all -f -y && \
+    echo "CHECKPOINT 4: lerobot environment created successfully ✓"
+
+# Install dependencies in lerobot environment
+RUN /opt/conda/envs/lerobot/bin/pip install --upgrade pip
+
+# Install lerobot[all] via pip in lerobot environment
+RUN echo "Installing lerobot in lerobot..." && \
+    /opt/conda/envs/lerobot/bin/pip install "lerobot" && \
+    echo "lerobot installed successfully in lerobot ✓"
+
+# Dowgrade setuptools to avoid ROS2 build issues
+RUN /opt/conda/envs/lerobot/bin/pip install setuptools==79.0.1
+
+# Build LeTrack ROS Workspace
+WORKDIR /workspace/LeTrack/ros_ws
+RUN echo "CHECKPOINT 4.1: Building LeTrack ROS workspace..." && \
+    /bin/bash -c "source /opt/conda/bin/activate lerobot && colcon build --symlink-install --cmake-args -DPython3_EXECUTABLE=\${CONDA_PREFIX}/bin/python -DPython_EXECUTABLE=\${CONDA_PREFIX}/bin/python" && \
+    echo "CHECKPOINT 4.1: LeTrack ROS workspace built successfully ✓"
+
+WORKDIR /workspace/Isaac-GR00T
+
+# =============================================================================
+# CHECKPOINT 5: Create gr00t Conda Environment (without problematic packages)
 # =============================================================================
 # Remove packages that need special handling:
 # - flash-attn: needs torch installed first
 # - gr00t: installed from source in CHECKPOINT 5
 # - opencv-python pip packages: conflict with conda's py-opencv/libopencv (keep conda versions)
-RUN echo "CHECKPOINT 4: Creating gr00t conda environment..." && \
+RUN echo "CHECKPOINT 5: Creating gr00t conda environment..." && \
     sed '/flash-attn/d; /gr00t==/d; /opencv-python/d' env.yaml > env-no-flash.yaml && \
     /opt/conda/bin/conda env create -f env-no-flash.yaml && \
     /opt/conda/bin/conda clean -afy && \
-    echo "CHECKPOINT 4: gr00t environment created successfully ✓"
-
+    echo "CHECKPOINT 5: gr00t environment created successfully ✓"
 # Verify gr00t environment
 RUN echo "Verifying gr00t environment..." && \
     /opt/conda/bin/conda run -n gr00t python --version && \
@@ -83,12 +136,12 @@ RUN echo "Installing flash-attn..." && \
     echo "flash-attn installed successfully ✓"
 
 # =============================================================================
-# CHECKPOINT 5: Create env_isaacsim Conda Environment
+# CHECKPOINT 6: Create env_isaacsim Conda Environment
 # =============================================================================
-RUN echo "CHECKPOINT 5: Creating env_isaacsim conda environment..." && \
+RUN echo "CHECKPOINT 6: Creating env_isaacsim conda environment..." && \
     /opt/conda/bin/conda env create -f env_isaacsim.yaml && \
     /opt/conda/bin/conda clean -afy && \
-    echo "CHECKPOINT 5: env_isaacsim environment created successfully ✓"
+    echo "CHECKPOINT 6: env_isaacsim environment created successfully ✓"
 
 # Verify env_isaacsim environment
 RUN echo "Verifying env_isaacsim environment..." && \
@@ -96,28 +149,12 @@ RUN echo "Verifying env_isaacsim environment..." && \
     /opt/conda/bin/conda run -n env_isaacsim pip list | head -20 && \
     echo "env_isaacsim environment verified ✓"
 
-# =============================================================================
-# CHECKPOINT 6: Create lerobot Conda Environment
-# =============================================================================
-RUN echo "CHECKPOINT 6: Creating lerobot conda environment..." && \
-    sed '/flash-attn/d; /pyzed/d' lerobot-env.yaml > lerobot-env-no-flash.yaml && \
-    /opt/conda/bin/conda env create -f lerobot-env-no-flash.yaml && \
-    /opt/conda/bin/conda clean -afy && \
-    echo "CHECKPOINT 6: lerobot environment created successfully ✓"
-
-# Install flash-attn for lerobot environment
-RUN echo "Installing flash-attn for lerobot..." && \
-    /opt/conda/bin/conda run -n lerobot pip install --no-cache-dir flash-attn==2.8.3 && \
-    echo "flash-attn installed successfully for lerobot ✓"
 
 # =============================================================================
-# CHECKPOINT 7: Copy Full Project and Install gr00t Package
+# CHECKPOINT 7: Install gr00t Package
 # =============================================================================
-COPY . /workspace/Isaac-GR00T/
-RUN echo "CHECKPOINT 7: Full project copied ✓"
-
-# Install gr00t package in editable mode
-RUN echo "Installing gr00t package..." && \
+# Code was cloned in Checkpoint 3, no need to COPY .
+RUN echo "CHECKPOINT 7: Installing gr00t package..." && \
     /opt/conda/bin/conda run -n gr00t pip install -e . && \
     echo "gr00t package installed successfully ✓"
 
@@ -149,15 +186,28 @@ RUN echo "CHECKPOINT 8: Verifying all environments..." && \
 # CHECKPOINT 9: Setup Runtime Configuration
 # =============================================================================
 # Create necessary directories
-RUN mkdir -p /workspace/LeTrack && \
-    mkdir -p /media/baxter/T7RawData/tmp1 && \
+# LeTrack is already cloned in Checkpoint 3
+RUN mkdir -p /media/baxter/T7RawData/tmp1 && \
     mkdir -p /media/baxter/storage/models/groot && \
+    mkdir -p /root/Documents && \
+    ln -s /workspace/LeTrack /root/Documents/LeTrack && \
+    mkdir -p /home/baxter/Documents && \
+    ln -s /workspace/LeTrack /home/baxter/Documents/LeTrack && \
     echo "CHECKPOINT 9: Runtime directories created ✓"
 
 # Setup zsh profile for conda
 RUN echo 'export PATH=/opt/conda/bin:$PATH' >> /root/.zshrc && \
     echo 'source /opt/conda/etc/profile.d/conda.sh' >> /root/.zshrc && \
     echo "CHECKPOINT 9: Shell configuration complete ✓"
+
+# Install Xvfb and other runtime dependencies late to preserve cache
+RUN apt-get update && \
+    apt-get install -y xvfb libglu1-mesa libxt6 libxcursor1 libxinerama1 libvulkan1 zenity && \
+    rm -rf /var/lib/apt/lists/*
+
+# Setup Vulkan ICD for NVIDIA
+RUN echo '{ "file_format_version" : "1.0.0", "ICD": { "library_path": "libGLX_nvidia.so.0", "api_version" : "1.3" } }' > /tmp/nvidia_icd.json
+ENV VK_ICD_FILENAMES=/tmp/nvidia_icd.json
 
 # =============================================================================
 # Final Configuration
@@ -167,6 +217,14 @@ SHELL ["/bin/bash", "-c"]
 # Create entrypoint script
 RUN echo '#!/bin/bash' > /entrypoint.sh && \
     echo 'source /opt/conda/etc/profile.d/conda.sh' >> /entrypoint.sh && \
+    echo 'git config --global --add safe.directory "*"' >> /entrypoint.sh && \
+    echo 'echo "Updating repositories..."' >> /entrypoint.sh && \
+    echo 'git -C /workspace/Isaac-GR00T pull || echo "Warning: Failed to pull Isaac-GR00T"' >> /entrypoint.sh && \
+    echo 'git -C /workspace/LeTrack pull || echo "Warning: Failed to pull LeTrack"' >> /entrypoint.sh && \
+    echo 'git -C /workspace/LeTrack/isaacsim pull origin main || echo "Warning: Failed to pull LeTrack"' >> /entrypoint.sh && \
+    echo 'git -C /workspace/LeTrack/ros_ws/src/so_100_arm pull origin main || echo "Warning: Failed to pull LeTrack"' >> /entrypoint.sh && \
+    echo 'git -C /workspace/LeTrack/ros_ws/src/so_100_track pull origin main || echo "Warning: Failed to pull LeTrack"' >> /entrypoint.sh && \
+    echo 'git -C /workspace/LeTrack/ros_ws/src/so_arm_100_hardware pull origin main || echo "Warning: Failed to pull LeTrack"' >> /entrypoint.sh && \
     echo 'exec "$@"' >> /entrypoint.sh && \
     chmod +x /entrypoint.sh
 
@@ -179,12 +237,11 @@ CMD ["/bin/bash", "-c", "source /opt/conda/etc/profile.d/conda.sh && conda activ
 # =============================================================================
 # Build Instructions:
 # 
-# To build with checkpoint verification:
-#   docker build -f Dockerfile.full_recorder -t groot-recorder:latest .
+# To build with checkpoint verification (requires GITHUB_TOKEN):
+#   docker build --build-arg GITHUB_TOKEN=your_token_here -f Dockerfile.full_recorder -t groot-recorder:latest .
 #
 # To run:
 #   docker run --gpus all \
-#     -v /path/to/LeTrack:/workspace/LeTrack \
 #     -v /path/to/data:/media/baxter/T7RawData \
 #     -v /path/to/models:/media/baxter/storage/models \
 #     groot-recorder:latest
@@ -195,12 +252,11 @@ CMD ["/bin/bash", "-c", "source /opt/conda/etc/profile.d/conda.sh && conda activ
 # Checkpoints:
 #   1. System dependencies
 #   2. Miniforge/Conda installation
-#   3. Environment files copied (ONLY yaml files)
+#   3. Clone repositories (Isaac-GR00T and LeTrack)
 #   4. gr00t environment created
 #   5. env_isaacsim environment created
 #   6. lerobot environment created
-#   7. Full project copied & gr00t package installed
+#   7. gr00t package installed (editable)
 #   8. All environments verified
-#   9. Runtime configuration
 #   9. Runtime configuration
 # =============================================================================

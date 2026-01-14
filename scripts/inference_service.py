@@ -184,6 +184,7 @@ def main(args: ArgsConfig):
         modality_config = data_config.modality_config()
         modality_transform = data_config.transform()
 
+        print(f"Loading policy model from {args.model_path}...")
         policy = Gr00tPolicy(
             model_path=args.model_path,
             modality_config=modality_config,
