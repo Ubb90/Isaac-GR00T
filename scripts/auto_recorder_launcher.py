@@ -500,17 +500,16 @@ class AutoRecorderLauncher(Node):
 
         try:
             if not self.real:
-                # Verify dataset path exists before launching republisher
+                # Translate container path to host path for the republisher
+                # The dataset_path is from the container's perspective, but republisher runs on host
+                host_dataset_path = translate_container_path_to_host(dataset_path)
+                self.get_logger().info(f'Translated dataset path: {dataset_path} -> {host_dataset_path}')
+                
+                # Note: Dataset path may not exist yet - recording just started
+                # The republisher will wait for data to appear
                 if not os.path.exists(dataset_path):
-                    self.get_logger().error(f'Dataset path does not exist: {dataset_path}')
-                    self.get_logger().error('This may be why the republisher fails to start')
-                    # List parent directory to help debug
-                    parent_dir = os.path.dirname(dataset_path)
-                    if os.path.exists(parent_dir):
-                        self.get_logger().error(f'Contents of {parent_dir}:')
-                        for item in os.listdir(parent_dir)[:10]:  # Show first 10 items
-                            self.get_logger().error(f'  - {item}')
-                    raise RuntimeError(f'Dataset path does not exist: {dataset_path}')
+                    self.get_logger().warn(f'Dataset path does not exist yet: {dataset_path}')
+                    self.get_logger().info('Republisher will wait for data to be written...')
                 
                 # Build the launch command for dataset republisher
                 # Need to properly source the ROS2 workspace with the correct conda environment
@@ -524,10 +523,8 @@ class AutoRecorderLauncher(Node):
                     f'export PYTHONPATH="" && '
                     f'conda activate lerobot && '
                     f'source {ros_ws_path} && '
-                    f'ros2 launch so_100_track dataset_republisher.launch.py dataset_path:={dataset_path}'
+                    f'ros2 launch so_100_track dataset_republisher.launch.py dataset_path:={host_dataset_path}'
                 )
-                
-                self.get_logger().info(f'Running republisher command: {republisher_cmd}')
                 
                 # Launch republisher process (non-blocking) with stderr/stdout capture
                 republisher_process = subprocess.Popen(
