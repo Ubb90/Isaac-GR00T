@@ -110,7 +110,7 @@ class ProcessRunner:
         if env_name == "env_isaacsim":
              pre_cmd = (
                  "export DISPLAY=:99 && "
-                 "(Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset &) && "
+                 "(Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset &) && sleep 3 && "
                  "export __NV_PRIME_RENDER_OFFLOAD=1 && "
                  "export __GLX_VENDOR_LIBRARY_NAME=nvidia && "
                 "export OMNI_CLIENT_USE_HUB=0 && "
@@ -123,6 +123,16 @@ class ProcessRunner:
         
         # Merge current env with unbuffered flag just in case
         env = os.environ.copy()
+
+        # Sanitize LD_LIBRARY_PATH: remove paths belonging to the current Conda environment (gr00t)
+        # to prevent them from leaking into the sub-process (env_isaacsim) and causing crashes.
+        if 'LD_LIBRARY_PATH' in env:
+            current_prefix = sys.prefix  # e.g., /opt/conda/envs/gr00t
+            paths = env['LD_LIBRARY_PATH'].split(os.pathsep)
+            # Keep only paths that do NOT contain the current env prefix
+            cleaned_paths = [p for p in paths if current_prefix not in p]
+            env['LD_LIBRARY_PATH'] = os.pathsep.join(cleaned_paths)
+
         env['PYTHONUNBUFFERED'] = '1'
         env['OMNI_KIT_ACCEPT_EULA'] = 'YES'
         
