@@ -275,7 +275,7 @@ class Gr00tROS2Node(Node):
 
     def __init__(self, config):
         super().__init__('gr00t_policy_node')
-        self.get_logger().set_level(rclpy.logging.LoggingSeverity.ERROR)
+        self.get_logger().set_level(rclpy.logging.LoggingSeverity.INFO)
         
         self.config = config
         

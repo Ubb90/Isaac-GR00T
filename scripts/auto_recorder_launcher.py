@@ -30,7 +30,7 @@ import cv2
 class AutoRecorderLauncher(Node):
     def __init__(self, policy_type='groot', policy_path=None, wait_for_convergence='True', control_frequency=3.0, root=None, num_episodes=1, episode_timeout=300.0, real=False):
         super().__init__('auto_recorder_launcher')
-        self.get_logger().set_level(rclpy.logging.LoggingSeverity.ERROR)
+        self.get_logger().set_level(rclpy.logging.LoggingSeverity.INFO)
         
         self.policy_type = policy_type
         self.policy_path = policy_path
@@ -499,6 +499,18 @@ class AutoRecorderLauncher(Node):
 
         try:
             if not self.real:
+                # Verify dataset path exists before launching republisher
+                if not os.path.exists(dataset_path):
+                    self.get_logger().error(f'Dataset path does not exist: {dataset_path}')
+                    self.get_logger().error('This may be why the republisher fails to start')
+                    # List parent directory to help debug
+                    parent_dir = os.path.dirname(dataset_path)
+                    if os.path.exists(parent_dir):
+                        self.get_logger().error(f'Contents of {parent_dir}:')
+                        for item in os.listdir(parent_dir)[:10]:  # Show first 10 items
+                            self.get_logger().error(f'  - {item}')
+                    raise RuntimeError(f'Dataset path does not exist: {dataset_path}')
+                
                 # Build the launch command for dataset republisher
                 # Need to properly source the ROS2 workspace with the correct conda environment
                 ros_ws_path = os.path.expanduser('/home/baxter/Documents/LeTrack/ros_ws/install/local_setup.zsh')
@@ -516,17 +528,29 @@ class AutoRecorderLauncher(Node):
                 
                 self.get_logger().info(f'Running republisher command: {republisher_cmd}')
                 
-                # Launch republisher process (non-blocking)
+                # Launch republisher process (non-blocking) with stderr/stdout capture
                 republisher_process = subprocess.Popen(
                     republisher_cmd,
                     shell=True,
                     executable='/bin/zsh',
-                    text=True
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT
                 )
                 self.running_processes.append(('republisher', republisher_process))
                 
-                # Wait a moment for republisher to start
-                time.sleep(2)
+                # Wait longer and check if republisher is actually publishing
+                self.get_logger().info('Waiting for republisher to start publishing topics...')
+                time.sleep(5)
+                
+                # Check if republisher process is still alive
+                if republisher_process.poll() is not None:
+                    # Process died - print its output
+                    output, _ = republisher_process.communicate()
+                    self.get_logger().error(f'Dataset republisher crashed! Output:\n{output}')
+                    raise RuntimeError('Dataset republisher failed to start')
+                
+                self.get_logger().info('Republisher appears to be running')
             
             # Build the command for policy evaluation
             # Need to properly source the ROS2 workspace with the correct conda environment
@@ -538,7 +562,8 @@ class AutoRecorderLauncher(Node):
                 eval_script_path = os.path.join(script_dir, 'eval_lerobot_ros2.py')
                 
                 # You may need to adjust these parameters based on your setup
-                eval_cmd = f'python3 {eval_script_path} --wait_for_convergence {self.wait_for_convergence} --control_frequency {self.control_frequency}'
+                # Add PYTHONUNBUFFERED to see prints immediately
+                eval_cmd = f'export PYTHONUNBUFFERED=1 && python3 {eval_script_path} --wait_for_convergence {self.wait_for_convergence} --control_frequency {self.control_frequency}'
             
             elif self.policy_type == 'lerobot':
                 lerobot_script_path = "/home/baxter/Documents/lerobot/src/lerobot/scripts/lerobot_ros2_control.py"
