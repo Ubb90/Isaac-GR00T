@@ -45,13 +45,6 @@ CONFIGS = [
     ("/media/baxter/storage/models/groot/so101track_cube_swap_moving_1_long/checkpoint-2500", "so100_track"),
 ]
 
-def translate_path_to_container(host_path):
-    """Translate host path to container path based on volume mounts."""
-    for host_prefix, container_prefix in PATH_MAPPINGS:
-        if host_path.startswith(host_prefix):
-            return host_path.replace(host_prefix, container_prefix, 1)
-    return host_path  # Return as-is if no mapping found
-
 def infer_data_config(checkpoint_path):
     path = Path(checkpoint_path)
     # Handle trailing slash
@@ -243,7 +236,9 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
             f"--evaluate "
             "--/app/audio/enabled=false "
             "--portable-root '/media/baxter/T7RawData/isaac_portable' "
-            "--vv"
+            "--vv "
+            "--no-windows "
+            
         )
         
         isaac_ready = threading.Event()
