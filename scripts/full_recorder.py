@@ -270,7 +270,7 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
 
         # Wait for both to be ready with timeout for Isaac Sim
         print("Waiting for Inference and Isaac Sim to be ready...")
-        isaac_timeout = 100  # 100 seconds
+        isaac_timeout = 60  # 60 seconds
         max_isaac_retries = 5
         isaac_retry_count = 0
         start_wait_time = time.time()
