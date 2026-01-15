@@ -201,12 +201,12 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
         inf_thread.start()
 
         # 2. Start Isaac Sim
-        # Note: Using hardcoded urdf/rmp paths from prompt, but could be dynamic if needed
+        # Note: Using dynamic paths based on LETRACK_ROOT
         static_flag = "--static " if "static" in ckpt_path else ""
         isaac_cmd = (
             f"{ISAAC_SCRIPT} "
-            f"--urdf '/home/baxter/Documents/LeTrack/ros_ws/src/so_100_track/urdf/so_100_arm_wheel.urdf' "
-            f"--rmp '/home/baxter/Documents/LeTrack/ros_ws/src/so_100_track/config' "
+            f"--urdf '{os.path.join(LETRACK_ROOT, 'ros_ws/src/so_100_track/urdf/so_100_arm_wheel.urdf')}' "
+            f"--rmp '{os.path.join(LETRACK_ROOT, 'ros_ws/src/so_100_track/config')}' "
             f"-r '{task_name}' "
             f"--fps 3 "
             f"--save-dir '{SAVE_DIR_ROOT}' "
