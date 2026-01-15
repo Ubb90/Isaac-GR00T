@@ -264,8 +264,18 @@ class AutoRecorderLauncher(Node):
             if not success:
                 self.get_logger().error(f'Episode {episode + 1} failed')
             
-            # Delay between episodes to ensure cleanup
-            time.sleep(15.0)
+            # Aggressive cleanup between episodes
+            if episode < self.num_episodes - 1:  # Don't do this after the last episode
+                self.get_logger().info('Cleaning up before next episode...')
+                self.cleanup_processes()
+                time.sleep(3.0)
+                
+                # Extra aggressive cleanup to ensure eval script is dead
+                self.get_logger().info('Double-checking all processes are dead...')
+                self.force_kill_lingering_nodes()
+                
+                # Additional delay to ensure everything is settled before next episode
+                time.sleep(5.0)
             
         self.get_logger().info('All episodes completed.')
         
@@ -338,6 +348,7 @@ class AutoRecorderLauncher(Node):
             
         except Exception as e:
             self.get_logger().error(f'Error in episode: {e}')
+            self.cleanup_processes()
             self.stop_recording()
             return False
     
@@ -568,33 +579,36 @@ class AutoRecorderLauncher(Node):
             
             start_time = time.time()
 
-            while True:
-                # Check for timeout
-                if time.time() - start_time > self.episode_timeout:
-                    self.get_logger().error(f'Episode timed out after {self.episode_timeout} seconds!')
-                    break
-
-                # Check if task is completed
-                if self.task_completed:
-                    self.get_logger().info('Task completed signal detected. Stopping processes...')
-                    break
-                
-                # Check if processes are still running
-                all_finished = True
-                for name, process in self.running_processes:
-                    if process.poll() is None:
-                        all_finished = False
+            try:
+                while True:
+                    # Check for timeout
+                    if time.time() - start_time > self.episode_timeout:
+                        self.get_logger().error(f'Episode timed out after {self.episode_timeout} seconds!')
                         break
-                
-                if all_finished:
-                    self.get_logger().info('All processes finished naturally.')
-                    break
-                
-                # Spin ROS to process callbacks (like task_completed)
-                rclpy.spin_once(self, timeout_sec=0.1)
-            
-            # Ensure processes are cleaned up
-            self.cleanup_processes()
+
+                    # Check if task is completed
+                    if self.task_completed:
+                        self.get_logger().info('Task completed signal detected. Stopping processes...')
+                        break
+                    
+                    # Check if processes are still running
+                    all_finished = True
+                    for name, process in self.running_processes:
+                        if process.poll() is None:
+                            all_finished = False
+                            break
+                    
+                    if all_finished:
+                        self.get_logger().info('All processes finished naturally.')
+                        break
+                    
+                    # Spin ROS to process callbacks (like task_completed)
+                    rclpy.spin_once(self, timeout_sec=0.1)
+            finally:
+                # Ensure processes are cleaned up no matter how we exit
+                self.get_logger().info('Cleaning up processes...')
+                self.cleanup_processes()
+                time.sleep(3.0)  # Give processes time to fully die
             
         except KeyboardInterrupt:
             self.get_logger().info('Launch interrupted by user')
@@ -615,18 +629,18 @@ class AutoRecorderLauncher(Node):
                 # Try SIGINT first (Ctrl+C equivalent) - ROS nodes like this
                 process.send_signal(signal.SIGINT)
                 try:
-                    process.wait(timeout=3)
+                    process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     # Try SIGTERM
                     if process.poll() is None:
                         self.get_logger().warn(f'SIGINT timed out for {name}, sending SIGTERM...')
                         process.terminate()
                         try:
-                            process.wait(timeout=2)
+                            process.wait(timeout=1)
                         except subprocess.TimeoutExpired:
                             # Force kill with SIGKILL
                             if process.poll() is None:
-                                self.get_logger().warn(f'SIGTERM timed out for {name}, force killing (SIGKILL)...')
+                                self.get_logger().warn(f'SIGTERM timed out for {name}, force killing with SIGKILL...')
                                 process.kill()
                                 try:
                                     process.wait(timeout=1)
