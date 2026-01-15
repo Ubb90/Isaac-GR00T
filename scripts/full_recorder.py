@@ -192,6 +192,11 @@ class ProcessRunner:
         print("Ensuring Isaac Sim is dead...")
         subprocess.run(f"pkill -u {os.getuid()} -9 -f kit", shell=True)
         
+        # Cleanup Xvfb processes
+        print("Cleaning up Xvfb...")
+        subprocess.run("pkill -9 Xvfb", shell=True)
+        subprocess.run("rm -f /tmp/.X99-lock", shell=True)
+        
         self.processes = []
 
 def monitor_output(process, name, ready_pattern, ready_event, wait_after_ready=0):
@@ -294,6 +299,11 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
                     except ProcessLookupError:
                         pass
                     subprocess.run(f"pkill -u {os.getuid()} -9 -f kit", shell=True)
+                    
+                    # Kill Xvfb process and remove lock file
+                    print("Cleaning up Xvfb process...")
+                    subprocess.run("pkill -9 Xvfb", shell=True)
+                    subprocess.run("rm -f /tmp/.X99-lock", shell=True)
                     time.sleep(5)
                     
                     # Remove old process from list
