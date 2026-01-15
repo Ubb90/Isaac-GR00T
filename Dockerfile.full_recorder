@@ -222,9 +222,9 @@ RUN echo '#!/bin/bash' > /entrypoint.sh && \
     echo 'git -C /workspace/Isaac-GR00T pull || echo "Warning: Failed to pull Isaac-GR00T"' >> /entrypoint.sh && \
     echo 'git -C /workspace/LeTrack pull || echo "Warning: Failed to pull LeTrack"' >> /entrypoint.sh && \
     echo 'git -C /workspace/LeTrack/isaacsim pull origin main || echo "Warning: Failed to pull LeTrack"' >> /entrypoint.sh && \
-    echo 'git -C /workspace/LeTrack/ros_ws/src/so_100_arm pull origin main || echo "Warning: Failed to pull LeTrack"' >> /entrypoint.sh && \
-    echo 'git -C /workspace/LeTrack/ros_ws/src/so_100_track pull origin main || echo "Warning: Failed to pull LeTrack"' >> /entrypoint.sh && \
-    echo 'git -C /workspace/LeTrack/ros_ws/src/so_arm_100_hardware pull origin main || echo "Warning: Failed to pull LeTrack"' >> /entrypoint.sh && \
+    echo 'git -C /workspace/LeTrack/ros_ws/src/so_100_arm pull origin main || echo "Warning: Failed to pull so_100_arm"' >> /entrypoint.sh && \
+    echo 'git -C /workspace/LeTrack/ros_ws/src/so_100_track pull origin master || echo "Warning: Failed to pull so_100_track"' >> /entrypoint.sh && \
+    echo 'git -C /workspace/LeTrack/ros_ws/src/so_arm_100_hardware pull origin main || echo "Warning: Failed to pull so_arm_100_hardware"' >> /entrypoint.sh && \
     echo 'exec "$@"' >> /entrypoint.sh && \
     chmod +x /entrypoint.sh
 

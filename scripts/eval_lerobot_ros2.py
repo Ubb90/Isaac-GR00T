@@ -677,9 +677,12 @@ class ROS2EvalConfig:
     policy_host: str = "localhost"
     policy_port: int = 5555
     
-    # Task configuration
-    lang_instruction: str = "swap the 2 cubes positions using a third location"
-    # lang_instruction: str = "pick up the cube and move it to the center of the red area"
+    # Task configuration - MUST be provided via command line argument
+    # Examples:
+    #   --lang_instruction "track the cube"
+    #   --lang_instruction "swap the 2 cubes positions using a third location"
+    #   --lang_instruction "pick up the cube and move it to the center of the red area"
+    lang_instruction: str = "PLEASE_SPECIFY_TASK_INSTRUCTION"
     action_horizon: Optional[int] = None  
     """Action horizon (number of actions predicted per policy query). 
     If None, will be automatically detected from the policy server's response.

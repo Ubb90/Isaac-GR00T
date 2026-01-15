@@ -28,7 +28,7 @@ import cv2
 
 
 class AutoRecorderLauncher(Node):
-    def __init__(self, policy_type='groot', policy_path=None, wait_for_convergence='True', control_frequency=3.0, root=None, num_episodes=1, episode_timeout=300.0, real=False):
+    def __init__(self, policy_type='groot', policy_path=None, wait_for_convergence='True', control_frequency=3.0, root=None, num_episodes=1, episode_timeout=300.0, real=False, lang_instruction=None):
         super().__init__('auto_recorder_launcher')
         self.get_logger().set_level(rclpy.logging.LoggingSeverity.INFO)
         
@@ -40,6 +40,7 @@ class AutoRecorderLauncher(Node):
         self.num_episodes = num_episodes
         self.episode_timeout = episode_timeout
         self.real = real
+        self.lang_instruction = lang_instruction
         self.get_logger().info(f'Auto Recorder Launcher - (Policy: {self.policy_type}, Episodes: {self.num_episodes}, Timeout: {self.episode_timeout}s, Real: {self.real})')
         self.save_path = None
         self.done = False
@@ -564,6 +565,10 @@ class AutoRecorderLauncher(Node):
                 # You may need to adjust these parameters based on your setup
                 # Add PYTHONUNBUFFERED to see prints immediately
                 eval_cmd = f'export PYTHONUNBUFFERED=1 && python3 {eval_script_path} --wait_for_convergence {self.wait_for_convergence} --control_frequency {self.control_frequency}'
+                
+                # Add language instruction if provided
+                if self.lang_instruction:
+                    eval_cmd += f' --lang_instruction "{self.lang_instruction}"'
             
             elif self.policy_type == 'lerobot':
                 lerobot_script_path = "/home/baxter/Documents/lerobot/src/lerobot/scripts/lerobot_ros2_control.py"
@@ -770,6 +775,7 @@ def main(args=None):
     parser.add_argument('--num_episodes', type=int, default=1, help='Number of episodes to run')
     parser.add_argument('--episode_timeout', type=float, default=180.0, help='Episode timeout in seconds')
     parser.add_argument('--real', action='store_true', help='Run in real world mode (no recording, no republisher)')
+    parser.add_argument('--lang_instruction', type=str, default=None, help='Language instruction for the policy')
     
     parsed_args, remaining_args = parser.parse_known_args(args=args)
     
@@ -783,7 +789,8 @@ def main(args=None):
         root=parsed_args.root,
         num_episodes=parsed_args.num_episodes,
         episode_timeout=parsed_args.episode_timeout,
-        real=parsed_args.real
+        real=parsed_args.real,
+        lang_instruction=parsed_args.lang_instruction
     )
     shutdown_requested = {'value': False}
     

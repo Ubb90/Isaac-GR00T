@@ -75,6 +75,21 @@ def infer_task_name(checkpoint_path):
     else:
         return "so101track_cube"
 
+def infer_lang_instruction(checkpoint_path):
+    """Infer the language instruction from the checkpoint path."""
+    path = Path(checkpoint_path)
+    if path.name == "":
+        path = path.parent
+    
+    run_name = path.parent.name
+    
+    if "swap" in run_name:
+        return "swap the 2 cubes positions using a third location"
+    elif "pick" in run_name or "place" in run_name:
+        return "pick up the cube and move it to the center of the red area"
+    else:
+        raise ValueError(f"Cannot infer language instruction from checkpoint path: {checkpoint_path}")
+
 def get_output_name(checkpoint_path, data_config):
     """Derives output name from checkpoint path and data config.
     Example: .../so101track_cube_static_reduced/checkpoint-500/ -> so101track_cube_static_reduced_500
@@ -305,7 +320,13 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
         print("Both services ready! Starting Auto Recorder...")
 
         # 3. Start Auto Recorder
-        recorder_cmd = f"python scripts/auto_recorder_launcher.py --policy-type groot --num_episodes {num_episodes}"
+        lang_instruction = infer_lang_instruction(ckpt_path)
+        recorder_cmd = (
+            f"python scripts/auto_recorder_launcher.py "
+            f"--policy-type groot "
+            f"--num_episodes {num_episodes} "
+            f'--lang_instruction "{lang_instruction}"'
+        )
         
         # We run this one blocking (wait for it to finish)
         # But we still need to stream output
