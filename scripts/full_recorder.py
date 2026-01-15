@@ -21,7 +21,14 @@ else:
     os.environ['CONDA_SOURCE_PATH'] = os.path.expanduser("~/bin/miniforge/etc/profile.d/conda.sh")
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LETRACK_ROOT = os.path.expanduser("~/Documents/LeTrack")
+
+if os.path.exists("/workspace/LeTrack"):
+    # Docker environment
+    LETRACK_ROOT = "/workspace/LeTrack"
+else:
+    # Local environment
+    LETRACK_ROOT = os.path.expanduser("~/Documents/LeTrack")
+
 ISAAC_SCRIPT = os.path.join(LETRACK_ROOT, "isaacsim/isaac.sh")
 SAVE_DIR_ROOT = "/media/baxter/T7RawData/tmp1"
 

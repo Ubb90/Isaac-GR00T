@@ -128,3 +128,4 @@ create_source_snapshot.sh
 **/build/** 
 **/log/**
 **/install/**
+generated_jobs/**
