@@ -8,6 +8,7 @@ import sys
 import threading
 import re
 import argparse
+import socket
 from pathlib import Path
 
 # --- Configuration ---
@@ -118,6 +119,30 @@ def translate_path_to_container(host_path):
             return host_path.replace(host_prefix, container_prefix, 1)
     return host_path  # Return as-is if no mapping found
 
+def find_available_port(start_port=5555, num_ports=5):
+    """Find an available port from a pool of ports.
+    
+    Args:
+        start_port: First port in the pool (default: 5555)
+        num_ports: Number of ports in the pool (default: 5)
+        
+    Returns:
+        int: An available port number
+        
+    Raises:
+        RuntimeError: If no ports are available
+    """
+    for port in range(start_port, start_port + num_ports):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(('', port))
+            sock.close()
+            print(f"Found available port: {port}")
+            return port
+        except OSError:
+            continue
+    raise RuntimeError(f"No available ports in range {start_port}-{start_port + num_ports - 1}")
+
 class ProcessRunner:
     def __init__(self):
         self.processes = []
@@ -220,6 +245,10 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
     embodiment_tag = "new_embodiment"
     runner = ProcessRunner()
     
+    # Find an available port for this Docker instance
+    port = find_available_port()
+    print(f"Using port {port} for groot server")
+    
     try:
         # 1. Start Inference Service
         inference_cmd = (
@@ -227,7 +256,8 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
             f"--model-path {ckpt_path} "
             f"--server "
             f"--embodiment_tag {embodiment_tag} "
-            f"--data_config {data_config}"
+            f"--data_config {data_config} "
+            f"--port {port}"
         )
         
         inf_ready = threading.Event()
@@ -235,7 +265,7 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
         
         inf_thread = threading.Thread(
             target=monitor_output,
-            args=(inf_proc, "Inference", "Server is ready and listening on tcp://0.0.0.0:5555", inf_ready)
+            args=(inf_proc, "Inference", f"Server is ready and listening on tcp://0.0.0.0:{port}", inf_ready)
         )
         inf_thread.daemon = True
         inf_thread.start()
@@ -335,7 +365,8 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
             f"python scripts/auto_recorder_launcher.py "
             f"--policy-type groot "
             f"--num_episodes {num_episodes} "
-            f'--lang_instruction "{lang_instruction}"'
+            f'--lang_instruction "{lang_instruction}" '
+            f"--policy_port {port}"
         )
         
         # We run this one blocking (wait for it to finish)

@@ -28,7 +28,7 @@ import cv2
 
 
 class AutoRecorderLauncher(Node):
-    def __init__(self, policy_type='groot', policy_path=None, wait_for_convergence='True', control_frequency=3.0, root=None, num_episodes=1, episode_timeout=300.0, real=False, lang_instruction=None):
+    def __init__(self, policy_type='groot', policy_path=None, wait_for_convergence='True', control_frequency=3.0, root=None, num_episodes=1, episode_timeout=300.0, real=False, lang_instruction=None, policy_host='localhost', policy_port=5555):
         super().__init__('auto_recorder_launcher')
         self.get_logger().set_level(rclpy.logging.LoggingSeverity.INFO)
         
@@ -41,7 +41,9 @@ class AutoRecorderLauncher(Node):
         self.episode_timeout = episode_timeout
         self.real = real
         self.lang_instruction = lang_instruction
-        self.get_logger().info(f'Auto Recorder Launcher - (Policy: {self.policy_type}, Episodes: {self.num_episodes}, Timeout: {self.episode_timeout}s, Real: {self.real})')
+        self.policy_host = policy_host
+        self.policy_port = policy_port
+        self.get_logger().info(f'Auto Recorder Launcher - (Policy: {self.policy_type}, Host: {self.policy_host}, Port: {self.policy_port}, Episodes: {self.num_episodes}, Timeout: {self.episode_timeout}s, Real: {self.real})')
         self.save_path = None
         self.done = False
         self.recording_started = False  # Track if recording was started
@@ -561,7 +563,7 @@ class AutoRecorderLauncher(Node):
                 
                 # You may need to adjust these parameters based on your setup
                 # Add PYTHONUNBUFFERED to see prints immediately
-                eval_cmd = f'export PYTHONUNBUFFERED=1 && python3 {eval_script_path} --wait_for_convergence {self.wait_for_convergence} --control_frequency {self.control_frequency}'
+                eval_cmd = f'export PYTHONUNBUFFERED=1 && python3 {eval_script_path} --wait_for_convergence {self.wait_for_convergence} --control_frequency {self.control_frequency} --policy_host {self.policy_host} --policy_port {self.policy_port}'
                 
                 # Add language instruction if provided
                 if self.lang_instruction:
@@ -773,6 +775,8 @@ def main(args=None):
     parser.add_argument('--episode_timeout', type=float, default=180.0, help='Episode timeout in seconds')
     parser.add_argument('--real', action='store_true', help='Run in real world mode (no recording, no republisher)')
     parser.add_argument('--lang_instruction', type=str, default=None, help='Language instruction for the policy')
+    parser.add_argument('--policy_host', type=str, default='localhost', help='Policy server host')
+    parser.add_argument('--policy_port', type=int, default=5555, help='Policy server port')
     
     parsed_args, remaining_args = parser.parse_known_args(args=args)
     
@@ -787,7 +791,9 @@ def main(args=None):
         num_episodes=parsed_args.num_episodes,
         episode_timeout=parsed_args.episode_timeout,
         real=parsed_args.real,
-        lang_instruction=parsed_args.lang_instruction
+        lang_instruction=parsed_args.lang_instruction,
+        policy_host=parsed_args.policy_host,
+        policy_port=parsed_args.policy_port
     )
     shutdown_requested = {'value': False}
     
