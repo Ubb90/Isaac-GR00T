@@ -500,10 +500,10 @@ class AutoRecorderLauncher(Node):
 
         try:
             if not self.real:
-                # Translate container path to host path for the republisher
-                # The dataset_path is from the container's perspective, but republisher runs on host
-                host_dataset_path = translate_container_path_to_host(dataset_path)
-                self.get_logger().info(f'Translated dataset path: {dataset_path} -> {host_dataset_path}')
+                # The dataset_path is already a host path that's accessible from both
+                # the container and the host (mounted volume), so no translation needed
+                host_dataset_path = dataset_path
+                self.get_logger().info(f'Using dataset path: {host_dataset_path}')
                 
                 # Note: Dataset path may not exist yet - recording just started
                 # The republisher will wait for data to appear
