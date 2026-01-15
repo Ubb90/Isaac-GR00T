@@ -312,6 +312,7 @@ class AutoRecorderLauncher(Node):
             # Step 4: Wait for new save path (different from the old one)
             if not self.real:
                 save_path = self.wait_for_new_save_path(save_path)
+            time.sleep(5.0)  # Small delay to ensure reset is complete
             
             # Step 5: Start recording
             if not self.real:
