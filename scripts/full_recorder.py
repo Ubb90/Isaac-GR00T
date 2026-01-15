@@ -85,10 +85,10 @@ def infer_lang_instruction(checkpoint_path):
     
     if "swap" in run_name:
         return "swap the 2 cubes positions using a third location"
-    elif "pick" in run_name or "place" in run_name:
+    elif "track" in run_name:
         return "pick up the cube and move it to the center of the red area"
     else:
-        raise ValueError(f"Cannot infer language instruction from checkpoint path: {checkpoint_path}")
+        raise ValueError(f"Cannot infer language instruction from checkpoint path: {checkpoint_path}. Run name: {run_name}")
 
 def get_output_name(checkpoint_path, data_config):
     """Derives output name from checkpoint path and data config.

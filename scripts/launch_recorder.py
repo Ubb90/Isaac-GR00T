@@ -99,7 +99,7 @@ def main():
 
     for i, chunk in enumerate(model_chunks):
         # Save split text file
-        split_model_filename = f"generated_jobs/models_chunk_{timestamp}_{i+1}.txt"
+        split_model_filename = f"generated_jobs/missing_models_{i+1}.txt"
         with open(split_model_filename, 'w') as f:
             f.write("\n".join(chunk))
 
