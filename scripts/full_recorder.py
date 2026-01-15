@@ -32,12 +32,25 @@ else:
 ISAAC_SCRIPT = os.path.join(LETRACK_ROOT, "isaacsim/isaac.sh")
 SAVE_DIR_ROOT = "/media/baxter/T7RawData/tmp1"
 
+# Docker volume mount mappings (host -> container)
+PATH_MAPPINGS = [
+    ("/mnt/hdd/flo_letrack/models/groot", "/media/baxter/storage/models/groot"),
+    ("/mnt/hdd/flo_letrack/groot_output", "/media/baxter/T7RawData"),
+]
+
 # List of configurations to run
 # Format: (checkpoint_path, data_config)
 CONFIGS = [
     # so101track_cube_moving_50 - Checkpoint 500
     ("/media/baxter/storage/models/groot/so101track_cube_swap_moving_1_long/checkpoint-2500", "so100_track"),
 ]
+
+def translate_path_to_container(host_path):
+    """Translate host path to container path based on volume mounts."""
+    for host_prefix, container_prefix in PATH_MAPPINGS:
+        if host_path.startswith(host_prefix):
+            return host_path.replace(host_prefix, container_prefix, 1)
+    return host_path  # Return as-is if no mapping found
 
 def infer_data_config(checkpoint_path):
     path = Path(checkpoint_path)
@@ -90,6 +103,13 @@ def get_output_name(checkpoint_path, data_config):
         base_name = f"{run_name}_{ckpt_name}"        
     return base_name
 
+def translate_path_to_container(host_path):
+    """Translate host path to container path based on volume mounts."""
+    for host_prefix, container_prefix in PATH_MAPPINGS:
+        if host_path.startswith(host_prefix):
+            return host_path.replace(host_prefix, container_prefix, 1)
+    return host_path  # Return as-is if no mapping found
+
 class ProcessRunner:
     def __init__(self):
         self.processes = []
@@ -123,16 +143,6 @@ class ProcessRunner:
         
         # Merge current env with unbuffered flag just in case
         env = os.environ.copy()
-
-        # Sanitize LD_LIBRARY_PATH: remove paths belonging to the current Conda environment (gr00t)
-        # to prevent them from leaking into the sub-process (env_isaacsim) and causing crashes.
-        if 'LD_LIBRARY_PATH' in env:
-            current_prefix = sys.prefix  # e.g., /opt/conda/envs/gr00t
-            paths = env['LD_LIBRARY_PATH'].split(os.pathsep)
-            # Keep only paths that do NOT contain the current env prefix
-            cleaned_paths = [p for p in paths if current_prefix not in p]
-            env['LD_LIBRARY_PATH'] = os.pathsep.join(cleaned_paths)
-
         env['PYTHONUNBUFFERED'] = '1'
         env['OMNI_KIT_ACCEPT_EULA'] = 'YES'
         
@@ -308,9 +318,11 @@ def main():
             for line in f:
                 ckpt_path = line.strip()
                 if ckpt_path:
-                    data_conf = infer_data_config(ckpt_path)
-                    task_name = infer_task_name(ckpt_path)
-                    configs_to_run.append((ckpt_path, data_conf, task_name))
+                    # Translate host path to container path
+                    container_path = translate_path_to_container(ckpt_path)
+                    data_conf = infer_data_config(container_path)
+                    task_name = infer_task_name(container_path)
+                    configs_to_run.append((container_path, data_conf, task_name))
         print(f"Loaded {len(configs_to_run)} configurations.")
     else:
         for ckpt, conf in CONFIGS:
