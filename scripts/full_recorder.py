@@ -148,7 +148,7 @@ class ProcessRunner:
         self.processes = []
         self.stop_event = threading.Event()
 
-    def run_command(self, cmd, env_name, cwd=None, name="Process"):
+    def run_command(self, cmd, env_name, cwd=None, name="Process", ros_domain_id=None):
         # Clear PYTHONPATH to prevent leakage from the calling environment
         # Force unbuffered output
         
@@ -178,6 +178,11 @@ class ProcessRunner:
         env = os.environ.copy()
         env['PYTHONUNBUFFERED'] = '1'
         env['OMNI_KIT_ACCEPT_EULA'] = 'YES'
+        
+        # Set ROS_DOMAIN_ID if provided
+        if ros_domain_id is not None:
+            env['ROS_DOMAIN_ID'] = str(ros_domain_id)
+            print(f"[{name}] Setting ROS_DOMAIN_ID={ros_domain_id}")
         
         process = subprocess.Popen(
             full_cmd,
@@ -241,13 +246,15 @@ def monitor_output(process, name, ready_pattern, ready_event, wait_after_ready=0
             print(f"[{name}] READY SIGNAL RECEIVED")
             ready_event.set()
 
-def run_single_config(ckpt_path, data_config, num_episodes, task_name):
+def run_single_config(ckpt_path, data_config, num_episodes, task_name, base_port=5555, ros_domain_id=None):
     embodiment_tag = "new_embodiment"
     runner = ProcessRunner()
     
-    # Find an available port for this Docker instance
-    port = find_available_port()
-    print(f"Using port {port} for groot server")
+    # Find an available port for this Docker instance, starting from base_port
+    port = find_available_port(start_port=base_port, num_ports=5)
+    print(f"Using port {port} for groot server (base_port: {base_port})")
+    if ros_domain_id is not None:
+        print(f"Using ROS_DOMAIN_ID={ros_domain_id}")
     
     try:
         # 1. Start Inference Service
@@ -261,7 +268,7 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
         )
         
         inf_ready = threading.Event()
-        inf_proc = runner.run_command(inference_cmd, "gr00t", cwd=WORKSPACE_ROOT, name="Inference")
+        inf_proc = runner.run_command(inference_cmd, "gr00t", cwd=WORKSPACE_ROOT, name="Inference", ros_domain_id=ros_domain_id)
         
         inf_thread = threading.Thread(
             target=monitor_output,
@@ -292,7 +299,7 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
         )
         
         isaac_ready = threading.Event()
-        isaac_proc = runner.run_command(isaac_cmd, "env_isaacsim", cwd=LETRACK_ROOT, name="IsaacSim")
+        isaac_proc = runner.run_command(isaac_cmd, "env_isaacsim", cwd=LETRACK_ROOT, name="IsaacSim", ros_domain_id=ros_domain_id)
         
         # Pattern: "Robot so101track_cube - root_joint: /so_100_arm/root_joint"
         # The prompt mentions two lines, but matching the second unique one is sufficient.
@@ -342,7 +349,7 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
                     # Restart Isaac Sim
                     print("Restarting Isaac Sim...")
                     isaac_ready.clear()
-                    isaac_proc = runner.run_command(isaac_cmd, "env_isaacsim", cwd=LETRACK_ROOT, name="IsaacSim")
+                    isaac_proc = runner.run_command(isaac_cmd, "env_isaacsim", cwd=LETRACK_ROOT, name="IsaacSim", ros_domain_id=ros_domain_id)
                     
                     isaac_thread = threading.Thread(
                         target=monitor_output,
@@ -366,12 +373,13 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
             f"--policy-type groot "
             f"--num_episodes {num_episodes} "
             f'--lang_instruction "{lang_instruction}" '
+            f"--policy_host localhost "
             f"--policy_port {port}"
         )
         
         # We run this one blocking (wait for it to finish)
         # But we still need to stream output
-        recorder_proc = runner.run_command(recorder_cmd, "gr00t", cwd=WORKSPACE_ROOT, name="Recorder")
+        recorder_proc = runner.run_command(recorder_cmd, "gr00t", cwd=WORKSPACE_ROOT, name="Recorder", ros_domain_id=ros_domain_id)
         
         # Stream recorder output to console
         while recorder_proc.poll() is None:
@@ -402,6 +410,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run full recording pipeline")
     parser.add_argument("--num_episodes", type=int, default=20, help="Number of episodes to run per config")
     parser.add_argument("--config-list", type=str, help="Path to file containing list of checkpoints to run")
+    parser.add_argument("--base-port", type=int, default=5555, help="Base port for groot server (default: 5555)")
+    parser.add_argument("--ros-domain-id", type=int, default=None, help="ROS_DOMAIN_ID for this Docker container (0-232)")
     args = parser.parse_args()
 
     configs_to_run = []
@@ -432,7 +442,7 @@ def main():
         print(f"Data config: {data_conf}")
         print(f"Task name: {task_name}")
         print(f"{'='*50}\n")
-        run_single_config(ckpt, data_conf, args.num_episodes, task_name)
+        run_single_config(ckpt, data_conf, args.num_episodes, task_name, base_port=args.base_port, ros_domain_id=args.ros_domain_id)
         time.sleep(5) # Cooldown between runs
 
 if __name__ == "__main__":
