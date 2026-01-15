@@ -253,13 +253,53 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
         isaac_thread.daemon = True
         isaac_thread.start()
 
-        # Wait for both to be ready
+        # Wait for both to be ready with timeout for Isaac Sim
         print("Waiting for Inference and Isaac Sim to be ready...")
+        isaac_timeout = 300  # 5 minutes
+        max_isaac_retries = 2
+        isaac_retry_count = 0
+        start_wait_time = time.time()
+        
         while not (inf_ready.is_set() and isaac_ready.is_set()):
             if inf_proc.poll() is not None:
                 raise RuntimeError("Inference process died unexpectedly")
             if isaac_proc.poll() is not None:
                 raise RuntimeError("Isaac Sim process died unexpectedly")
+            
+            # Check for Isaac Sim timeout
+            if not isaac_ready.is_set() and (time.time() - start_wait_time) > isaac_timeout:
+                if isaac_retry_count < max_isaac_retries:
+                    isaac_retry_count += 1
+                    print(f"\n[WARNING] Isaac Sim startup timeout ({isaac_timeout}s). Restarting Isaac Sim (attempt {isaac_retry_count}/{max_isaac_retries})...")
+                    
+                    # Kill the existing Isaac Sim process
+                    print("Killing existing Isaac Sim process...")
+                    try:
+                        os.killpg(os.getpgid(isaac_proc.pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    subprocess.run(f"pkill -u {os.getuid()} -9 -f kit", shell=True)
+                    time.sleep(5)
+                    
+                    # Remove old process from list
+                    runner.processes = [(n, p) for n, p in runner.processes if n != "IsaacSim"]
+                    
+                    # Restart Isaac Sim
+                    print("Restarting Isaac Sim...")
+                    isaac_ready.clear()
+                    isaac_proc = runner.run_command(isaac_cmd, "env_isaacsim", cwd=LETRACK_ROOT, name="IsaacSim")
+                    
+                    isaac_thread = threading.Thread(
+                        target=monitor_output,
+                        args=(isaac_proc, "IsaacSim", "root_joint: /so_100_arm/root_joint", isaac_ready, 10)
+                    )
+                    isaac_thread.daemon = True
+                    isaac_thread.start()
+                    
+                    start_wait_time = time.time()  # Reset timer
+                else:
+                    raise RuntimeError(f"Isaac Sim failed to start after {max_isaac_retries} retries")
+            
             time.sleep(1)
         
         print("Both services ready! Starting Auto Recorder...")
