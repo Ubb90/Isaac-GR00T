@@ -237,7 +237,7 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name):
             "--/app/audio/enabled=false "
             "--portable-root '/media/baxter/T7RawData/isaac_portable' "
             "--vv "
-            "--no-windows "
+            "--no-window "
             
         )
         
