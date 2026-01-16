@@ -246,7 +246,7 @@ def monitor_output(process, name, ready_pattern, ready_event, wait_after_ready=0
             print(f"[{name}] READY SIGNAL RECEIVED")
             ready_event.set()
 
-def run_single_config(ckpt_path, data_config, num_episodes, task_name, base_port=5555, ros_domain_id=None, isaac_sim_timeout=60):
+def run_single_config(ckpt_path, data_config, num_episodes, task_name, base_port=5555, ros_domain_id=None, isaac_sim_timeout=60, no_window=True):
     embodiment_tag = "new_embodiment"
     runner = ProcessRunner()
     
@@ -280,6 +280,7 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name, base_port
         # 2. Start Isaac Sim
         # Note: Using dynamic paths based on LETRACK_ROOT
         static_flag = "--static " if "static" in ckpt_path else ""
+        no_window_flag = "--no-window " if no_window else ""
         isaac_cmd = (
             f"{ISAAC_SCRIPT} "
             f"--urdf '{os.path.join(LETRACK_ROOT, 'ros_ws/src/so_100_track/urdf/so_100_arm_wheel.urdf')}' "
@@ -294,7 +295,7 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name, base_port
             "--/app/audio/enabled=false "
             "--portable-root '/media/baxter/T7RawData/isaac_portable' "
             "--vv "
-            "--no-window "
+            f"{no_window_flag}"
             
         )
         
@@ -413,6 +414,7 @@ def main():
     parser.add_argument("--base-port", type=int, default=5555, help="Base port for groot server (default: 5555)")
     parser.add_argument("--ros-domain-id", type=int, default=None, help="ROS_DOMAIN_ID for this Docker container (0-232)")
     parser.add_argument("--isaac-sim-timeout", type=int, default=60, help="Timeout in seconds for Isaac Sim startup (default: 60)")
+    parser.add_argument("--window", action="store_true", help="Show Isaac Sim window (default: no window)")
     args = parser.parse_args()
 
     configs_to_run = []
@@ -443,7 +445,7 @@ def main():
         print(f"Data config: {data_conf}")
         print(f"Task name: {task_name}")
         print(f"{'='*50}\n")
-        run_single_config(ckpt, data_conf, args.num_episodes, task_name, base_port=args.base_port, ros_domain_id=args.ros_domain_id, isaac_sim_timeout=args.isaac_sim_timeout)
+        run_single_config(ckpt, data_conf, args.num_episodes, task_name, base_port=args.base_port, ros_domain_id=args.ros_domain_id, isaac_sim_timeout=args.isaac_sim_timeout, no_window=not args.window)
         time.sleep(5) # Cooldown between runs
 
 if __name__ == "__main__":
