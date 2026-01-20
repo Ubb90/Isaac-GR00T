@@ -246,7 +246,28 @@ def monitor_output(process, name, ready_pattern, ready_event, wait_after_ready=0
             print(f"[{name}] READY SIGNAL RECEIVED")
             ready_event.set()
 
-def run_single_config(ckpt_path, data_config, num_episodes, task_name, base_port=5555, ros_domain_id=None, isaac_sim_timeout=60, no_window=True):
+def run_single_config(ckpt_path, data_config, num_episodes, task_name, base_port=5555, ros_domain_id=None, isaac_sim_timeout=60, no_window=True, max_retries=3):
+    embodiment_tag = "new_embodiment"
+    
+    for retry_attempt in range(max_retries):
+        if retry_attempt > 0:
+            print(f"\n{'='*60}")
+            print(f"RETRYING RUN (Attempt {retry_attempt + 1}/{max_retries})")
+            print(f"{'='*60}\n")
+            time.sleep(10)  # Cooldown before retry
+        
+        try:
+            return _run_single_config_attempt(ckpt_path, data_config, num_episodes, task_name, base_port, ros_domain_id, isaac_sim_timeout, no_window)
+        except RuntimeError as e:
+            print(f"\n[ERROR] Run failed: {e}")
+            if retry_attempt < max_retries - 1:
+                print(f"Will retry... ({retry_attempt + 1}/{max_retries - 1} retries used)")
+            else:
+                print(f"Max retries ({max_retries}) reached. Giving up on this configuration.")
+                raise
+
+def _run_single_config_attempt(ckpt_path, data_config, num_episodes, task_name, base_port=5555, ros_domain_id=None, isaac_sim_timeout=60, no_window=True):
+    """Single attempt at running a configuration. May raise RuntimeError on failure."""
     embodiment_tag = "new_embodiment"
     runner = ProcessRunner()
     
@@ -320,9 +341,15 @@ def run_single_config(ckpt_path, data_config, num_episodes, task_name, base_port
         
         while not (inf_ready.is_set() and isaac_ready.is_set()):
             if inf_proc.poll() is not None:
+                runner.cleanup()
                 raise RuntimeError("Inference process died unexpectedly")
             if isaac_proc.poll() is not None:
-                raise RuntimeError("Isaac Sim process died unexpectedly")
+                exit_code = isaac_proc.returncode
+                runner.cleanup()
+                if exit_code == -11 or exit_code == 139:  # SIGSEGV
+                    raise RuntimeError(f"Isaac Sim crashed with segmentation fault (exit code: {exit_code})")
+                else:
+                    raise RuntimeError(f"Isaac Sim process died unexpectedly (exit code: {exit_code})")
             
             # Check for Isaac Sim timeout
             if not isaac_ready.is_set() and (time.time() - start_wait_time) > isaac_timeout:
@@ -415,6 +442,7 @@ def main():
     parser.add_argument("--ros-domain-id", type=int, default=None, help="ROS_DOMAIN_ID for this Docker container (0-232)")
     parser.add_argument("--isaac-sim-timeout", type=int, default=60, help="Timeout in seconds for Isaac Sim startup (default: 60)")
     parser.add_argument("--window", action="store_true", help="Show Isaac Sim window (default: no window)")
+    parser.add_argument("--max-retries", type=int, default=3, help="Maximum number of retries on Isaac Sim crash (default: 3)")
     args = parser.parse_args()
 
     configs_to_run = []
@@ -445,7 +473,7 @@ def main():
         print(f"Data config: {data_conf}")
         print(f"Task name: {task_name}")
         print(f"{'='*50}\n")
-        run_single_config(ckpt, data_conf, args.num_episodes, task_name, base_port=args.base_port, ros_domain_id=args.ros_domain_id, isaac_sim_timeout=args.isaac_sim_timeout, no_window=not args.window)
+        run_single_config(ckpt, data_conf, args.num_episodes, task_name, base_port=args.base_port, ros_domain_id=args.ros_domain_id, isaac_sim_timeout=args.isaac_sim_timeout, no_window=not args.window, max_retries=args.max_retries)
         time.sleep(5) # Cooldown between runs
 
 if __name__ == "__main__":

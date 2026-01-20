@@ -80,7 +80,7 @@ spec:
             git stash
             git pull origin main
             # 1. Verify Dataset Path before starting
-            DATASET_PATH="/mnt/datasets/letrack/so101track_cube_static_lerobot_v2/"
+            DATASET_PATH="/mnt/datasets/letrack/so101track_cube_static_center_25_lerobot_v2/"
             FOLDER_NAME=$(echo "${DATASET_PATH%/}" | sed 's/.*\///; s/_lerobot_v[^/]*$//')
 
             if [ ! -d "$DATASET_PATH" ]; then

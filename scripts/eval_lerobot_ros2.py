@@ -497,6 +497,8 @@ class Gr00tROS2Node(Node):
                 self.get_logger().info(f">>> EXECUTING buffered action {self.action_index + 1}/{len(self.action_buffer)}")
                 self.get_logger().info(f"    Target pose: [{action_dict['pose'][0]:.3f}, {action_dict['pose'][1]:.3f}, {action_dict['pose'][2]:.3f}]")
                 self.get_logger().info(f"    Current pose: [{self.latest_robot_pose[0]:.3f}, {self.latest_robot_pose[1]:.3f}, {self.latest_robot_pose[2]:.3f}]")
+                self.get_logger().info(f"    Target rotation: [{action_dict['pose'][3]:.3f}, {action_dict['pose'][4]:.3f}, {action_dict['pose'][5]:.3f}, {action_dict['pose'][6]:.3f}]")
+                self.get_logger().info(f"    Current rotation: [{self.latest_robot_pose[3]:.3f}, {self.latest_robot_pose[4]:.3f}, {self.latest_robot_pose[5]:.3f}, {self.latest_robot_pose[6]:.3f}]")
                 
                 # Check if robot pose has changed since last action
                 pose_delta = np.linalg.norm(action_dict['pose'] - self.latest_robot_pose[:3])

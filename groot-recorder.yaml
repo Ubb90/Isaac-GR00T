@@ -1,0 +1,80 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: groot-recorder-
+  namespace: pgr25florent
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: containerroot
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #       - matchExpressions:
+      #         - key: nvidia.com/gpu.product
+      #           operator: In
+      #           values:
+      #           - "NVIDIA-GeForce-RTX-3090"
+      #           - "NVIDIA-GeForce-RTX-4090"
+      #           - "NVIDIA-GeForce-RTX-A5000"
+      nodeSelector:
+        nvidia.com/gpu.product: "NVIDIA-GeForce-RTX-3090"
+      volumes:
+      - name: ssh-key
+        secret:
+          secretName: launcher-ssh-key
+          defaultMode: 256
+
+      - name: data-storage-vol
+        persistentVolumeClaim:
+          claimName: pgr25florentvol1claim
+      - name: dshm
+        emptyDir:
+          medium: Memory
+      containers:
+      - name: groot-recorder
+        image: docker.io/ubb90/groot-recorder:latest
+        imagePullPolicy: Always
+        securityContext:
+          runAsUser: 0
+        resources:
+          requests:
+            cpu: "8"
+            memory: "24Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "16"
+            memory: "32Gi"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: data-storage-vol
+          mountPath: /media/baxter/storage/models/groot
+          subPath: groot
+        - name: data-storage-vol
+          mountPath: /media/baxter/T7RawData
+          subPath: groot_results
+        - name: dshm
+          mountPath: /dev/shm
+        - name: ssh-key
+          mountPath: /root/.ssh
+        envFrom:
+        - secretRef:
+            name: launcher-global-env
+
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          echo "--- SETUP ---"
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate gr00t
+
+          echo "--- STARTING RECORDER ---"
+          if [ -s missing_models.txt ]; then
+              cat missing_models.txt
+              python scripts/full_recorder.py --config-list missing_models.txt
+          else
+              echo "No missing models found. Exiting."
+          fi
+      restartPolicy: OnFailure
