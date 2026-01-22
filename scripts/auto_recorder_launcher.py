@@ -36,7 +36,7 @@ class AutoRecorderLauncher(Node):
         self.policy_path = policy_path
         self.wait_for_convergence = wait_for_convergence
         self.control_frequency = control_frequency
-        self.root = root
+        self.root = root  # Only used for certain policy types if needed
         self.num_episodes = num_episodes
         self.episode_timeout = episode_timeout
         self.real = real
@@ -569,28 +569,42 @@ class AutoRecorderLauncher(Node):
                 if self.lang_instruction:
                     eval_cmd += f' --lang_instruction "{self.lang_instruction}"'
             
-            elif self.policy_type == 'lerobot':
-                lerobot_script_path = "/home/baxter/Documents/lerobot/src/lerobot/scripts/lerobot_ros2_control.py"
+            elif self.policy_type in ['act', 'pi05']:
+                robot_client_script_path = "/home/baxter/Documents/lerobot/src/lerobot/async_inference/robot_client_ros2.py"
                 
-                # Construct command with conda activation for lerobot
+                # Ensure we have policy_path
+                if not self.policy_path:
+                    raise ValueError(f"policy_path is required for {self.policy_type} policy")
+                
+                camera_topics = "['/dataset/scene_camera/rgb', '/dataset/wrist_camera/rgb']"
+                camera_keys = "['scene_camera', 'wrist_camera']"
+                # Build the command for ACT/Pi05 policies using robot_client_ros2.py
                 eval_cmd = (
                     f'{conda_source_cmd} && '
-                    f'conda deactivate && '
-                    f'export PYTHONPATH="" && '
                     f'conda activate lerobot && '
-                    f'source {ros_ws_path} && '
-                    f'python {lerobot_script_path} --display_data=true'
+                    f'python {robot_client_script_path} '
+                    f'--policy_type={self.policy_type} '
+                    f'--pretrained_name_or_path={self.policy_path} '
+                    f'--server_address={self.policy_host}:{self.policy_port} '
+                    f'--policy_device=cuda '
+                    f'--actions_per_chunk=5 '
+                    f'--camera_topics="{camera_topics}" '
+                    f'--camera_keys="{camera_keys}" '
+                    f'--robot_state_topic="/so101track_cube/joint_states" '
+                    f'--robot_pose_topic="/dataset/right_arm_ee_pose" '
+                    f'--ee_pose_topic="/right_hand/pose" '
+                    f'--gripper_topic="/right_hand/trigger" '
+                    f'--control_frequency={self.control_frequency} '
+                    f'--fps={self.control_frequency}'
                 )
                 
-                if self.policy_path:
-                    eval_cmd += f' --policy.path={self.policy_path}'
-                
-                if self.root:
-                    eval_cmd += f' --dataset.root={self.root}'
+                # Add language instruction if provided
+                if self.lang_instruction:
+                    eval_cmd += f' --task="{self.lang_instruction}"'
             
             else:
                 self.get_logger().error(f'Unknown policy type: {self.policy_type}')
-                raise ValueError(f'Unknown policy type: {self.policy_type}')
+                raise ValueError(f'Unknown policy type: {self.policy_type}. Supported types: groot, act, pi05')
 
             self.get_logger().info(f'Running eval command: {eval_cmd}')
             
@@ -766,9 +780,9 @@ def main(args=None):
     import argparse
     
     parser = argparse.ArgumentParser(description='Auto Recorder Launcher')
-    parser.add_argument('--policy_type', type=str, default='groot', choices=['groot', 'lerobot'], help='Type of policy to run')
-    parser.add_argument('--policy_path', type=str, default=None, help='Path to policy (for lerobot)')
-    parser.add_argument('--root', type=str, default=None, help='Root directory for dataset (for lerobot)')
+    parser.add_argument('--policy_type', type=str, default='groot', choices=['groot', 'act', 'pi05'], help='Type of policy to run')
+    parser.add_argument('--policy_path', type=str, default=None, help='Path to policy checkpoint (required for act/pi05)')
+    parser.add_argument('--root', type=str, default=None, help='Root directory for dataset (optional, not used for act/pi05)')
     parser.add_argument('--wait_for_convergence', type=str, default='True', help='Wait for convergence (for groot)')
     parser.add_argument('--control_frequency', type=float, default=3.0, help='Control frequency (for groot)')
     parser.add_argument('--num_episodes', type=int, default=1, help='Number of episodes to run')
