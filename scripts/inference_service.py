@@ -121,6 +121,9 @@ class ArgsConfig:
     dit_dtype: Literal["fp16", "fp8"] = "fp8"
     """DiT model dtype (fp16, fp8). Only used when use_tensorrt is True."""
 
+    randomize_vision: bool = False
+    """If True, replace all vision backbone weights with random noise after loading (ablation study)."""
+
 
 #####################################################################################
 
@@ -192,6 +195,15 @@ def main(args: ArgsConfig):
             embodiment_tag=args.embodiment_tag,
             denoising_steps=args.denoising_steps,
         )
+        print("Policy model loaded successfully!")
+        print(policy.model.backbone.eagle_model.vision_model.config)
+        if args.randomize_vision:
+            from transformers import SiglipVisionModel
+            
+            random_vision = SiglipVisionModel(policy.model.backbone.eagle_model.vision_model.config)
+            policy.model.backbone.eagle_model.vision_model = random_vision       
+            policy.model.backbone.eagle_model.vision_model.requires_grad_(False)     
+            print("[ABLATION] Vision backbone weights randomized.")
 
         # Setup TensorRT if requested
         if args.use_tensorrt:
