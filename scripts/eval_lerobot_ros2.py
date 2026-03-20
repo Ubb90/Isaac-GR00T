@@ -363,6 +363,22 @@ class Gr00tROS2Node(Node):
         )
         self.get_logger().info(f"Subscribed to robot pose topic: {self.config.robot_pose_topic}")
 
+    @staticmethod
+    def _apply_blur(image: np.ndarray, blur_level: int) -> np.ndarray:
+        """Apply Gaussian blur to an image.
+
+        Args:
+            image: RGB image as numpy array (H, W, 3)
+            blur_level: 0 = no blur, 100 = maximum blur (image unrecognizable)
+        """
+        if blur_level <= 0:
+            return image
+        sigma = blur_level / 100.0 * 50.0  # Scale [0, 100] -> sigma [0, 50]
+        ksize = max(3, int(sigma * 6 + 1))
+        if ksize % 2 == 0:
+            ksize += 1
+        return cv2.GaussianBlur(image, (ksize, ksize), sigma)
+
     def camera_callback(self, msg: Image, camera_key: str):
         """Callback for camera image messages."""
         try:
@@ -386,7 +402,11 @@ class Gr00tROS2Node(Node):
             else:
                 self.get_logger().warn(f"Unsupported image encoding: {msg.encoding}")
                 return
-            
+
+            # Apply blur if configured (0 = no blur, 100 = maximum blur)
+            if self.config.blur_image > 0:
+                cv_image = self._apply_blur(cv_image, self.config.blur_image)
+
             # Check if image has changed
             if camera_key in self.camera_images:
                 old_mean = self.camera_images[camera_key].mean()
@@ -709,7 +729,10 @@ class ROS2EvalConfig:
     
     # Debug options
     show_images: bool = True
-    
+    blur_image: int = 0
+    """Blur level applied to all camera images before sending to the policy.
+    0 = no blur (default), 100 = maximum blur (image is unrecognizable)."""
+
     def __post_init__(self):
         # Set default camera topics if not provided
         # Based on So100TrackDataConfig: ["video.scene_camera", "video.wrist_camera"]
