@@ -108,7 +108,8 @@ class EagleBackbone(nn.Module):
 
         # Defensively move all tensors to the model's device in case prepare_input
         # didn't fully transfer them (e.g. due to tree.map_structure recursing into lists).
-        device = next(self.parameters()).device
+        # Use the language model's device as the authoritative device (it's never replaced).
+        device = next(self.eagle_model.language_model.parameters()).device
         eagle_input = {
             k: v.to(device) if isinstance(v, torch.Tensor) else v
             for k, v in eagle_input.items()

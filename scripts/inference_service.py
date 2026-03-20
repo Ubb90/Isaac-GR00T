@@ -199,10 +199,11 @@ def main(args: ArgsConfig):
         print(policy.model.backbone.eagle_model.vision_model.config)
         if args.randomize_vision:
             from transformers import SiglipVisionModel
-            
+
             random_vision = SiglipVisionModel(policy.model.backbone.eagle_model.vision_model.config)
-            policy.model.backbone.eagle_model.vision_model = random_vision       
-            policy.model.backbone.eagle_model.vision_model.requires_grad_(False)     
+            random_vision = random_vision.to(policy.device)
+            policy.model.backbone.eagle_model.vision_model = random_vision
+            policy.model.backbone.eagle_model.vision_model.requires_grad_(False)
             print("[ABLATION] Vision backbone weights randomized.")
 
         # Setup TensorRT if requested
