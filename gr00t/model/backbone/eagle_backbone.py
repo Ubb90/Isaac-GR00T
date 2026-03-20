@@ -106,6 +106,13 @@ class EagleBackbone(nn.Module):
         }
         del eagle_input["image_sizes"]
 
+        # Defensively move all tensors to the model's device in case prepare_input
+        # didn't fully transfer them (e.g. due to tree.map_structure recursing into lists).
+        device = next(self.parameters()).device
+        eagle_input = {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in eagle_input.items()
+        }
         eagle_output = self.eagle_model(**eagle_input, output_hidden_states=True, return_dict=True)
         eagle_features = eagle_output.hidden_states[self.select_layer]
 
