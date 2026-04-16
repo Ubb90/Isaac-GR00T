@@ -210,13 +210,12 @@ def main(args: ArgsConfig):
             print("[ABLATION] Vision backbone weights randomized.")
 
         if args.randomize_mlp:
-            from transformers import SiglipVisionModel
-            
-            random_mlp = SiglipVisionModel(policy.model.backbone.eagle_model.mlp1.config)
-            random_mlp = random_mlp.to(policy.device)
+            import torch
 
-            policy.model.backbone.eagle_model.mlp1 = random_mlp
+            for param in policy.model.backbone.eagle_model.mlp1.parameters():
+                torch.nn.init.normal_(param.data)
             policy.model.backbone.eagle_model.mlp1.requires_grad_(False)
+            print("[ABLATION] MLP1 projection weights randomized.")
             
         # Setup TensorRT if requested
         if args.use_tensorrt:
