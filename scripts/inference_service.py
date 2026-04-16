@@ -124,6 +124,9 @@ class ArgsConfig:
     randomize_vision: bool = False
     """If True, replace all vision backbone weights with random noise after loading (ablation study)."""
 
+    randomize_mlp: bool = False
+    """If True, reinitialize the vision-language projection MLP (mlp1) with random weights after loading (ablation study)."""
+
 
 #####################################################################################
 
@@ -206,6 +209,15 @@ def main(args: ArgsConfig):
             policy.model.backbone.eagle_model.vision_model.requires_grad_(False)
             print("[ABLATION] Vision backbone weights randomized.")
 
+        if args.randomize_mlp:
+            from transformers import SiglipVisionModel
+            
+            random_mlp = SiglipVisionModel(policy.model.backbone.eagle_model.mlp1.config)
+            random_mlp = random_mlp.to(policy.device)
+
+            policy.model.backbone.eagle_model.mlp1 = random_mlp
+            policy.model.backbone.eagle_model.mlp1.requires_grad_(False)
+            
         # Setup TensorRT if requested
         if args.use_tensorrt:
             print(f"Setting up TensorRT engines from: {args.trt_engine_path}")

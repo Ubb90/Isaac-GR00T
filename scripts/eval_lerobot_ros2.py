@@ -729,9 +729,9 @@ class ROS2EvalConfig:
     
     # Debug options
     show_images: bool = True
+    # Blur level applied to all camera images before sending to the policy.
+    # 0 = no blur (default), 100 = maximum blur (image is unrecognizable).
     blur_image: int = 0
-    """Blur level applied to all camera images before sending to the policy.
-    0 = no blur (default), 100 = maximum blur (image is unrecognizable)."""
 
     def __post_init__(self):
         # Set default camera topics if not provided
