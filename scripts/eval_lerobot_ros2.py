@@ -658,12 +658,22 @@ class Gr00tROS2Node(Node):
                 y=float(action_dict['pose'][1]), 
                 z=float(action_dict['pose'][2])
             )
-            pose_msg.orientation = Quaternion(
-                x=float(action_dict['rotation'][1]), 
-                y=float(action_dict['rotation'][2]), 
-                z=float(action_dict['rotation'][3]), 
-                w=float(action_dict['rotation'][0])
-            )
+            if self.config.rotate_output:
+                # Real mode: rotation tensor is [x, y, z, w]
+                pose_msg.orientation = Quaternion(
+                    x=float(action_dict['rotation'][0]),
+                    y=float(action_dict['rotation'][1]),
+                    z=float(action_dict['rotation'][2]),
+                    w=float(action_dict['rotation'][3]),
+                )
+            else:
+                # Sim mode: rotation tensor is [w, x, y, z]
+                pose_msg.orientation = Quaternion(
+                    x=float(action_dict['rotation'][1]),
+                    y=float(action_dict['rotation'][2]),
+                    z=float(action_dict['rotation'][3]),
+                    w=float(action_dict['rotation'][0]),
+                )
 
             # pose_msg.orientation = Quaternion(
             #     x=0.0, 
@@ -732,6 +742,8 @@ class ROS2EvalConfig:
     # Blur level applied to all camera images before sending to the policy.
     # 0 = no blur (default), 100 = maximum blur (image is unrecognizable).
     blur_image: int = 0
+    # Rotation output is [x, y, z, w] order instead of sim [w, x, y, z]
+    rotate_output: bool = False
 
     def __post_init__(self):
         # Set default camera topics if not provided
