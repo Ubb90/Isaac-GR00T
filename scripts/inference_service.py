@@ -127,6 +127,11 @@ class ArgsConfig:
     randomize_mlp: bool = False
     """If True, reinitialize the vision-language projection MLP (mlp1) with random weights after loading (ablation study)."""
 
+    randomize_action_head: bool = False
+    """If True, reinitialize the whole flow-matching action head (DiT, state/action encoders, action decoder,
+    VL layernorm/self-attention) with random weights after loading; the Eagle VLM backbone is left intact.
+    Counterpart of the PI0.5 action-expert ablation (ablation study)."""
+
 
 #####################################################################################
 
@@ -216,6 +221,15 @@ def main(args: ArgsConfig):
                 torch.nn.init.normal_(param.data)
             policy.model.backbone.eagle_model.mlp1.requires_grad_(False)
             print("[ABLATION] MLP1 projection weights randomized.")
+
+        if args.randomize_action_head:
+            import torch
+
+            torch.manual_seed(42)
+            for param in policy.model.action_head.parameters():
+                torch.nn.init.normal_(param.data)
+            policy.model.action_head.requires_grad_(False)
+            print("[ABLATION] Action head weights randomized (DiT + state/action encoders + decoder).")
             
         # Setup TensorRT if requested
         if args.use_tensorrt:
